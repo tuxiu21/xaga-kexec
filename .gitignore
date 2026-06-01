@@ -1,0 +1,23 @@
+# Recycle bin and test logs
+/old/
+/logs/
+
+# Large external source trees and nested repositories
+/sources/
+
+# Generated artifacts
+/output/
+*.img
+*.lz4
+*.cpio
+*.dtb
+*.zip
+
+# Extracted boot/vendor inputs
+/vendor/
+/unpack_gki/
+
+# Local/editor files
+.DS_Store
+*.swp
+*~
