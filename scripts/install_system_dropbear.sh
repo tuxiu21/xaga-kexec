@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT="/home/in/work/kernels"
 
+"$ROOT/scripts/install_kexec_payload.sh"
+
 aarch64-linux-gnu-gcc -static -Os -s \
   -o "$ROOT/output/system_kxsh.elf" \
   "$ROOT/src/system_kxsh.c"
@@ -26,6 +28,8 @@ adb.exe shell "su -c 'cp /data/local/tmp/dropbearkey /data/kexec/dropbearkey'"
 adb.exe shell "su -c 'cp /data/local/tmp/kxsh.sh /data/kexec/kxsh.sh'"
 adb.exe shell "su -c 'chmod 0755 /data/kexec/busybox /data/kexec/dropbear /data/kexec/dropbearkey /data/kexec/kxsh.sh'"
 adb.exe shell "su -c '/data/kexec/busybox ln -sf /data/kexec/busybox /data/kexec/sh'"
+
+"$ROOT/scripts/install_adbd.sh"
 
 adb.exe shell "su -c 'printf \"root::0:0:root:/data/kexec/root:/data/kexec/sh\n\" > /data/kexec/passwd'"
 adb.exe shell "su -c 'printf \"root:x:0:\n\" > /data/kexec/group'"

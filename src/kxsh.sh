@@ -2,12 +2,42 @@
 
 BB=/data/kexec/busybox
 DATA_BASE=/data/kexec
+LOG_FILE=/data/kexec/kxsh.log
+ADBD_LOG=/data/kexec/adbd.log
 PATH=/data/kexec:/system/bin:/vendor/bin
 export PATH
 
 log()
 {
-    echo "kexec-system-init: $*" > /dev/kmsg 2>/dev/null
+    msg="kexec-system-init: $*"
+    echo "$msg" > /dev/kmsg 2>/dev/null
+    echo "$msg" >> "$LOG_FILE" 2>/dev/null
+}
+
+log_file()
+{
+    label="$1"
+    path="$2"
+
+    if [ -e "$path" ]; then
+        val="$("$BB" cat "$path" 2>/dev/null)"
+        log "$label: $val"
+    else
+        log "$label: missing $path"
+    fi
+}
+
+log_ls()
+{
+    label="$1"
+    path="$2"
+
+    log "$label:"
+    "$BB" ls -la "$path" > /dev/kmsg 2>&1
+    {
+        echo "kexec-system-init: $label:"
+        "$BB" ls -la "$path" 2>&1
+    } >> "$LOG_FILE" 2>/dev/null
 }
 
 mount_if_needed()
@@ -38,6 +68,15 @@ prepare_base()
     mount_if_needed /tmp tmpfs tmpfs "mode=1777"
     mount_if_needed /config configfs configfs ""
     "$BB" ln -sf /dev/pts/ptmx /dev/ptmx 2>/dev/null
+    "$BB" mkdir -p /system/bin /bin 2>/dev/null
+    if [ -x "$DATA_BASE/linker64" ] && [ ! -e /system/bin/linker64 ]; then
+        "$BB" mount -t tmpfs -o mode=0755 tmpfs /system/bin 2>/dev/null
+    fi
+    "$BB" ln -sf /data/kexec/sh /system/bin/sh 2>/dev/null
+    "$BB" ln -sf /data/kexec/sh /bin/sh 2>/dev/null
+    if [ -x "$DATA_BASE/linker64" ]; then
+        "$BB" ln -sf "$DATA_BASE/linker64" /system/bin/linker64 2>/dev/null
+    fi
 }
 
 prepare_accounts()
@@ -84,6 +123,39 @@ start_watchdog_feeder()
     log "watchdog feeder started"
 }
 
+cleanup_usb_before_panic()
+{
+    log "panic cleanup: begin"
+
+    g=/config/usb_gadget/g1
+    if [ -e "$g/UDC" ]; then
+        cur="$("$BB" cat "$g/UDC" 2>/dev/null)"
+        if [ -n "$cur" ]; then
+            log "panic cleanup: unbinding USB gadget from $cur"
+            echo "" > "$g/UDC" 2>/dev/null
+            log "panic cleanup: UDC unbind rc=$?"
+        else
+            log "panic cleanup: USB gadget already unbound"
+        fi
+    else
+        log "panic cleanup: no gadget UDC node"
+    fi
+
+    if "$BB" pidof adbd >/dev/null 2>&1; then
+        log "panic cleanup: stopping adbd"
+        "$BB" killall adbd 2>/dev/null
+        "$BB" sleep 1
+    fi
+
+    if "$BB" pidof dropbear >/dev/null 2>&1; then
+        log "panic cleanup: stopping dropbear"
+        "$BB" killall dropbear 2>/dev/null
+    fi
+
+    "$BB" sync 2>/dev/null
+    log "panic cleanup: end"
+}
+
 start_panic_timer()
 {
     after=90
@@ -102,54 +174,150 @@ start_panic_timer()
         log "panic timer armed: ${after}s"
         "$BB" sleep "$after"
         log "panic timer firing"
+        cleanup_usb_before_panic
         echo 1 > /proc/sys/kernel/sysrq 2>/dev/null
         echo c > /proc/sysrq-trigger 2>/dev/null
         echo panic > /proc/sysrq-trigger 2>/dev/null
     ) &
 }
 
-setup_usb_rndis()
+setup_usb_adb()
 {
-    [ -d /sys/class/udc ] || return 0
-    [ -d /config/usb_gadget ] || return 0
+    log "setup_usb_adb: begin"
+    "$BB" ifconfig lo up 2>/dev/null
+
+    [ -d /sys/class/udc ] || {
+        log "no UDC class; skipping adb gadget"
+        return 0
+    }
+    [ -d /config/usb_gadget ] || {
+        log "no configfs usb_gadget; skipping adb gadget"
+        return 0
+    }
+    [ -x "$DATA_BASE/adbd" ] || {
+        log "missing $DATA_BASE/adbd"
+        return 0
+    }
+    [ -x "$DATA_BASE/linker64" ] || log "missing $DATA_BASE/linker64; adbd exec may fail"
+    [ -e /system/bin/linker64 ] || log "missing /system/bin/linker64; adbd exec may fail"
+    log_ls "system bin runtime" /system/bin
+
+    log_ls "UDC candidates" /sys/class/udc
+
+    if [ -e /sys/fs/selinux/enforce ]; then
+        echo 0 > /sys/fs/selinux/enforce 2>/dev/null && log "SELinux set permissive"
+        log_file "SELinux enforce" /sys/fs/selinux/enforce
+    fi
+
     udc="$("$BB" ls /sys/class/udc 2>/dev/null | "$BB" head -n 1)"
-    [ -n "$udc" ] || return 0
+    [ -n "$udc" ] || {
+        log "no UDC available; skipping adb gadget"
+        return 0
+    }
+    log "selected UDC: $udc"
 
     g=/config/usb_gadget/g1
-    if [ ! -d "$g" ]; then
-        log "creating rndis gadget"
-        "$BB" mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" 2>/dev/null
-        echo 0x18d1 > "$g/idVendor" 2>/dev/null
-        echo 0x4ee4 > "$g/idProduct" 2>/dev/null
-        echo 0x0200 > "$g/bcdUSB" 2>/dev/null
-        echo 0x0100 > "$g/bcdDevice" 2>/dev/null
-        echo kexec-dropbear > "$g/strings/0x409/manufacturer" 2>/dev/null
-        echo rescue-rndis > "$g/strings/0x409/product" 2>/dev/null
-        echo 0123456789abcdef > "$g/strings/0x409/serialnumber" 2>/dev/null
-        echo rndis > "$g/configs/c.1/strings/0x409/configuration" 2>/dev/null
-        echo 500 > "$g/configs/c.1/MaxPower" 2>/dev/null
-        "$BB" mkdir -p "$g/functions/rndis.gs4" 2>/dev/null || return 0
-        "$BB" ln -s "$g/functions/rndis.gs4" "$g/configs/c.1/rndis.gs4" 2>/dev/null
+    "$BB" mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" 2>/dev/null || {
+        log "failed to create gadget directories"
+        return 0
+    }
+    cur="$("$BB" cat "$g/UDC" 2>/dev/null)"
+    log "initial gadget UDC: ${cur:-unbound}"
+    if [ -n "$cur" ]; then
+        echo "" > "$g/UDC" 2>/dev/null
+        log "unbound existing gadget rc=$?"
     fi
+
+    echo 0x2717 > "$g/idVendor" 2>/dev/null
+    echo 0xff08 > "$g/idProduct" 2>/dev/null
+    echo 0x0200 > "$g/bcdUSB" 2>/dev/null
+    echo 0x0100 > "$g/bcdDevice" 2>/dev/null
+    echo kexec-adbd > "$g/strings/0x409/manufacturer" 2>/dev/null
+    echo rescue-adb > "$g/strings/0x409/product" 2>/dev/null
+    echo 0123456789abcdef > "$g/strings/0x409/serialnumber" 2>/dev/null
+    echo adb > "$g/configs/c.1/strings/0x409/configuration" 2>/dev/null
+    echo 500 > "$g/configs/c.1/MaxPower" 2>/dev/null
+    log_file "gadget idVendor" "$g/idVendor"
+    log_file "gadget idProduct" "$g/idProduct"
+
+    "$BB" mkdir -p "$g/functions/ffs.adb" /dev/usb-ffs/adb 2>/dev/null || {
+        log "failed to create ffs.adb directories"
+        return 0
+    }
+    log "created ffs.adb directories"
+    "$BB" grep -q " /dev/usb-ffs/adb " /proc/mounts 2>/dev/null || \
+        "$BB" mount -t functionfs adb /dev/usb-ffs/adb 2>/dev/null || {
+            log "failed to mount adb FunctionFS"
+            return 0
+        }
+    log "mounted adb FunctionFS"
+    log_ls "adb FunctionFS before adbd" /dev/usb-ffs/adb
+
+    if ! "$BB" pidof adbd >/dev/null 2>&1; then
+        log "starting lean adbd"
+        : > "$ADBD_LOG" 2>/dev/null
+        LD_LIBRARY_PATH="$DATA_BASE/adblib" "$DATA_BASE/adbd" >> "$ADBD_LOG" 2>&1 &
+        adbd_pid=$!
+        log "adbd pid=$adbd_pid"
+    else
+        adbd_pid="$("$BB" pidof adbd 2>/dev/null)"
+        log "adbd already running pid=$adbd_pid"
+    fi
+
+    "$BB" sleep 1
+    if "$BB" kill -0 "$adbd_pid" 2>/dev/null; then
+        log "adbd alive after 1s"
+    else
+        log "adbd not alive after 1s"
+    fi
+    log_ls "adb FunctionFS after adbd start" /dev/usb-ffs/adb
+
+    ready=0
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        [ -e /dev/usb-ffs/adb/ep1 ] && {
+            ready=1
+            break
+        }
+        "$BB" sleep 1
+    done
+
+    if [ "$ready" != "1" ]; then
+        log "adbd did not publish FunctionFS endpoints"
+        log_ls "adb FunctionFS endpoint wait failed" /dev/usb-ffs/adb
+        if [ -s "$ADBD_LOG" ]; then
+            log "adbd log:"
+            "$BB" cat "$ADBD_LOG" > /dev/kmsg 2>&1
+            {
+                echo "kexec-system-init: adbd log:"
+                "$BB" cat "$ADBD_LOG" 2>&1
+            } >> "$LOG_FILE" 2>/dev/null
+        fi
+        return 0
+    fi
+    log "adbd published FunctionFS endpoints"
+
+    if ! "$BB" pidof adbd >/dev/null 2>&1; then
+        log "adbd exited before USB bind"
+        return 0
+    fi
+
+    [ -e "$g/configs/c.1/ffs.adb" ] || \
+        "$BB" ln -s "$g/functions/ffs.adb" "$g/configs/c.1/ffs.adb" 2>/dev/null
+    ln_rc=$?
+    log "linked ffs.adb into config rc=$ln_rc"
+    log_ls "gadget config c.1" "$g/configs/c.1"
 
     cur="$("$BB" cat "$g/UDC" 2>/dev/null)"
     if [ -z "$cur" ] && [ -w "$g/UDC" ]; then
-        log "binding rndis gadget to $udc"
+        log "binding adb gadget to $udc"
         echo "$udc" > "$g/UDC" 2>/dev/null
-        "$BB" sleep 2
+        bind_rc=$?
+        log "UDC bind rc=$bind_rc"
+        log_file "gadget UDC after bind" "$g/UDC"
+    else
+        log "skip UDC bind; cur=${cur:-empty} writable=$([ -w "$g/UDC" ] && echo yes || echo no)"
     fi
-}
-
-setup_network()
-{
-    "$BB" ifconfig lo up 2>/dev/null
-    setup_usb_rndis
-    for iface in usb0 rndis0 eth0 enx0; do
-        [ -d "/sys/class/net/$iface" ] || continue
-        log "configuring $iface"
-        "$BB" ifconfig "$iface" 192.168.66.2 netmask 255.255.255.0 up 2>/dev/null
-        "$BB" ip addr add 198.18.0.2/15 dev "$iface" 2>/dev/null
-    done
+    log "setup_usb_adb: end"
 }
 
 start_dropbear()
@@ -176,14 +344,15 @@ start_dropbear()
         > /dev/kmsg 2>&1 &
 }
 
+: > "$LOG_FILE" 2>/dev/null
 log "entered /data/kexec/kxsh.sh"
 prepare_base
 prepare_accounts
 start_watchdog_feeder
 start_panic_timer
-setup_network
+setup_usb_adb
 start_dropbear
-log "ready; try ssh root@192.168.66.2"
+log "ready; try adb shell, or adb forward tcp:2222 tcp:22"
 
 while true; do
     "$BB" sleep 10

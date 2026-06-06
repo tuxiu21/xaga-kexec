@@ -1,50 +1,36 @@
-# Kexec Lean-Linux Host on mt6895 (production)
+# Kexec Lean Linux on mt6895
 
-This project boots a **lean Linux userspace on the phone's own hardware via kexec**,
-to run production workloads (Docker, pure-CPU) with minimal Android overhead. It
-lets Android first-stage init finish, then replaces the normal second-stage
-`/system/bin/init` handoff with a custom static `/system/bin/kxsh`, which mounts
-`/data`, brings up networking, and starts an SSH server (dropbear) for access.
+This project boots a lean Linux userspace on the phone's hardware via `kexec`.
+Android first-stage init runs far enough to hand off to `/system/bin/init`; the
+combined ramdisk patches that handoff to `/system/bin/kxsh`, which then enters the
+`/data/kexec` runtime.
 
-**This is not a rescue system** — it is the device's intended runtime. dropbear is
-just how we reach it.
+The host-side management path is **adb over USB**. Dropbear still runs inside the
+lean system, but it is reached through `adb forward tcp:2222 tcp:22`, not through
+RNDIS.
 
-**Why kexec instead of flashing a custom boot:** the bootloader is unlockable, but
-kexec is deliberate. If the lean system fails to boot or dies, the device falls
-back to Android (adb reachable), so it can be re-kexec'd remotely with no physical
-access. Combined with the hardware watchdog and an auto-kexec-on-boot step, this is
-a self-healing loop: `lean system hangs → watchdog reset → Android → auto re-kexec`.
+## Safety Notes
 
-## What works now
+- Do **not** run `fastboot reboot recovery` on xaga. It can leave the BCB set to
+  `boot-recovery` and force repeated recovery boots. Enter recovery only through a
+  verified safe device-specific path.
+- Do not repeatedly kexec after a failed boot without collecting adb, pstore, or
+  bootloader state. Ramoops is small and useful evidence is easy to overwrite.
 
-- kexec reliably boots the lean kernel + initrd (single-boot success ~60%; the boot
-  loop retries until a full boot).
-- second-stage handoff to `/system/bin/kxsh`; `/data` mounted as f2fs; `kxsh.sh` runs.
-- USB RNDIS gadget reaches `USB_STATE=CONFIGURED`; dropbear starts on `:22`.
-- **survives the kernel's ~30s "disable unused regulators" cleanup** (previously a
-  hard ~31.7s death) via a DTB `regulator-always-on` patch — full boots now run well
-  past 31s.
+## Current State
 
-Boot-reliability fixes (in `scripts/kexec_dropbear_until_new.sh`):
-
-- device-side `--initrd` uses the **basename** — a host-relative path made `kexec -l`
-  fail silently, so the device never rebooted and every round re-read a stale log.
-- the **AP hardware watchdog is kicked right before the kexec jump** — it would
-  otherwise time out before the new kernel reaches its own feeder (`AP_WDT`).
-- `--dtb=patched.dtb` carries `regulator-always-on` (see step 6).
-- the loop retries until it captures a **full** boot (reached kxsh), keeping the best
-  partial; freshness is decided by a per-round `/dev/kmsg` nonce, not by "Bye!".
-
-## In progress / not yet solved
-
-- **thermal under sustained CPU load is untested** (screen removed for cooling) —
-  verify in-kernel throttling before running real production load.
-- host-side route over USB RNDIS (USB 2.0 is slow; wifi planned, load on demand).
-- Docker bring-up inside kxsh (cgroup v2, overlayfs, `/var/lib/docker` on `/data`).
-- auto-kexec on Android boot; kernel-module whitelist; baking the DTB patch into
-  vendor_boot for permanence; narrowing the 9 always-on rails by bisection.
-- ~20% `AP_WDT` + ~20% `scpsys`/SSPM early-boot deaths — scattered, no clean
-  kernel-side fix found; the boot loop's retry absorbs them.
+- kexec can reach the lean userspace intermittently; retrying is expected.
+- Known outcomes per attempt are roughly: reaches `kxsh`, old-kernel `Bye!` only,
+  or early init/module hang.
+- The correct kexec kernel is extracted from
+  `old/5.10.226/260531-ramsize-docker.img`.
+- `patched.dtb` carries the `regulator-always-on` fix that avoids the old ~31.7s
+  regulator cleanup death.
+- `src/kxsh.sh` sets up an adb-only USB gadget and starts lean `adbd`; USB
+  enumeration is verified working (host sees serial `0123456789abcdef` with a
+  root shell).
+- RNDIS is deprecated for this workflow. The Windows/RNDIS host route was too
+  fragile and is no longer the primary debug path.
 
 ## Requirements
 
@@ -54,7 +40,7 @@ Host tools:
 adb.exe
 magiskboot
 aarch64-linux-gnu-gcc
-gcc                      # builds the libfdt DTB patcher
+gcc
 perl
 sed
 ```
@@ -62,158 +48,148 @@ sed
 Device assumptions:
 
 ```text
-root access is available through su (KernelSU/Magisk)
-/system can be remounted read-write
-/data is not encrypted for this boot path
-active slot is currently assumed to be _a
-GKI ramdisk already exists at unpack_gki/ramdisk
+root access is available through su
+/system can be remounted read-write for installing /system/bin/kxsh
+/data is usable from the lean runtime
+active slot is currently assumed to be _a by some scripts
+GKI ramdisk exists at unpack_gki/ramdisk
 ```
 
-Known limitations:
+## Important Files
 
 ```text
-scripts/build_vendor_base_initrd.sh prints the slot suffix but still reads vendor_boot_a
-scripts do not extract unpack_gki/ramdisk from boot.img
-authorized_keys must be prepared by the user
-host-side USB/RNDIS route still needs work
+src/system_kxsh.c          static second-stage init shim installed as /system/bin/kxsh
+src/kxsh.sh                /data/kexec runtime: mounts, watchdog, adb gadget, dropbear
+src/dtb_always_on.c        libfdt DTB patcher for regulator-always-on
+
+scripts/install_kexec_payload.sh
+                            installs kernel, kexec binary, initrd, patched.dtb
+scripts/install_adbd.sh     installs prebuilt/adbd (lean) plus runtime linker/libs
+scripts/install_system_dropbear.sh
+                            installs /system/bin/kxsh and /data/kexec runtime files
+scripts/build_system_initrd.sh
+                            builds output/combined_ramdisk_kexec_system.lz4
+scripts/build_always_on_dtb.sh
+                            generates and pushes /data/local/tmp/patched.dtb
+scripts/force_stock_adb_recovery.sh
+                            recovery-side helper to force stock adb and clear BCB
+scripts/kexec_adb_until_new.sh
+                            kexec boot/capture loop; stops when lean adb
+                            enumerates (serial 0123456789abcdef)
+scripts/kexec_dropbear_until_new.sh
+                            same loop judged by SSH; holds the watchdog /
+                            regulator / Bye! / partial debugging notes
+
+vendor/                     unpacked vendor ramdisk payloads
+unpack_gki/ramdisk          GKI ramdisk patched from init -> kxsh
+output/                     generated initrds and binaries
+sources/                    AOSP/kernel/tool source trees
+logs/                       captured kexec logs
+old/                        archived boot images and experiments
 ```
 
-## Directory Layout
+## Build And Install
 
-```text
-src/
-  system_kxsh.c          static ELF installed to /system/bin/kxsh (2nd-stage init)
-  kxsh.sh                /data/kexec second-stage userspace bringup (mount /data, USB, dropbear)
-  dtb_always_on.c        libfdt in-place DTB patcher (adds regulator-always-on)
-
-prebuilt/
-  busybox
-  dropbear
-  dropbearkey
-
-scripts/
-  build_vendor_base_initrd.sh
-  build_kxsh.sh
-  install_system_dropbear.sh
-  build_system_initrd.sh
-  push_initrd.sh
-  build_always_on_dtb.sh        generate + push patched.dtb (regulator-always-on)
-  test_dropbear_initrd.sh
-  kexec_dropbear_until_new.sh
-
-vendor/                  unpacked from vendor_boot_a.img (ramdisk, base dtb)
-unpack_gki/ramdisk       GKI ramdisk (patched init -> kxsh)
-output/                  combined initrds + system_kxsh.elf
-sources/                 kernel / tool source trees kept as project context
-logs/                    kexec boot logs
-old/                     recycle bin for old experiments
-```
-
-## Full Flow
-
-### 1. Build Known-Good Vendor Base Initrd
-
-Pulls `vendor_boot_a`, unpacks it, applies the known MT6315 and DEVAPC patches, and
-builds the baseline combined initrd.
+Build the vendor base and system initrd when the ramdisk inputs change:
 
 ```bash
 cd /home/in/work/kernels
 bash scripts/build_vendor_base_initrd.sh
+bash scripts/build_system_initrd.sh
 ```
 
-```text
-patch mt6315-regulator.ko:  mediatek,mt6315_7-regulator -> mediatek,mt6315_x-regulator
-remove device-apc-mt6895.ko (ko + modules.load + modules.load.recovery + modules.dep)
-```
-
-### 2. Build Static kxsh
+The lean `adbd` is frozen into `prebuilt/adbd` (the AOSP **recovery** variant --
+the only one built with the `LEAN_KEXEC_ADBD` marker). `scripts/install_adbd.sh`
+installs from there and refuses any `adbd` without that marker. Rebuild it only
+when the AOSP source changes:
 
 ```bash
-bash scripts/build_kxsh.sh
-# == aarch64-linux-gnu-gcc -static -Os -s -o output/system_kxsh.elf src/system_kxsh.c
+cd /home/in/work/kernels/sources/android-12.1
+source build/envsetup.sh
+lunch aosp_arm64-eng
+m adbd
+cp out/soong/.intermediates/packages/modules/adb/adbd/android_recovery_arm64_armv8-a/adbd \
+   /home/in/work/kernels/prebuilt/adbd
 ```
 
-### 3. Install kxsh + runtime files
-
-Installs `/system/bin/kxsh` and the `/data/kexec` payload (busybox, dropbear,
-dropbearkey, kxsh.sh, passwd/group/shadow, panic_after).
+Install the runtime payload:
 
 ```bash
+cd /home/in/work/kernels
 bash scripts/install_system_dropbear.sh
 ```
 
-`/data/local/tmp` is only an adb push staging area; the persistent files live under
-`/data/kexec`.
+That script also runs `scripts/install_kexec_payload.sh` and
+`scripts/install_adbd.sh`.
 
-### 4. Build kexec System Initrd
+## Boot And Access
 
-Removes vendor ramdisk `/init`, patches GKI `/init` from `/system/bin/init` to
-`/system/bin/kxsh`, then concatenates patched GKI + patched vendor ramdisk.
-
-```bash
-bash scripts/build_system_initrd.sh
-# -> output/combined_ramdisk_kexec_system.lz4
-```
-
-### 5. Push Initrd to Device
+Set a short panic timer while debugging so logs return to stock Android quickly:
 
 ```bash
-bash scripts/push_initrd.sh
-# -> /data/local/tmp/combined_ramdisk_kexec_system.lz4
+adb.exe shell "su -c 'echo 45 > /data/kexec/panic_after'"
 ```
 
-### 6. Build & Push the regulator-always-on DTB
-
-A minimal userspace leaves some PMIC rails unclaimed, so the kernel's 30s "disable
-unused regulators" cleanup cuts them and the SoC browns out (~31.7s). This pulls the
-device's **live** DTB (`/sys/firmware/fdt` — the bootloader's finished product, with
-its memory / reserved-memory fixups), adds `regulator-always-on` to the affected
-rails **in place** with libfdt (no decompile, no source rebuild), and pushes it.
+Boot with the existing kexec/test scripts. A successful lean adb transport should
+enumerate as serial `0123456789abcdef`.
 
 ```bash
-bash scripts/build_always_on_dtb.sh
-# -> /data/local/tmp/patched.dtb   (used via --dtb; see DTB_DEV below)
+adb.exe devices
+adb.exe -s 0123456789abcdef shell
 ```
 
-### 7. Boot / capture loop
-
-`kexec_dropbear_until_new.sh` kexecs (kicking the watchdog, passing `--dtb`), then
-retries until it captures a full boot or SSH comes up.
+For a full dropbear session over adb:
 
 ```bash
-bash scripts/test_dropbear_initrd.sh            # 20 rounds, ssh probe 198.18.0.2:22
-bash scripts/test_dropbear_initrd.sh 20 192.168.66.2 22
-# knobs: DTB_DEV=patched.dtb (default; set empty to reuse live FDT),
-#        STALE_MAX / BYE_MAX / NOEXEC_MAX
+adb.exe -s 0123456789abcdef forward tcp:2222 tcp:22
+ssh -p 2222 root@127.0.0.1
 ```
 
-Logs: `logs/kexec_dropbear_until_new_YYYYMMDD_HHMMSS/`.
+If stock Android returns but `adb devices` stays empty, unplug/replug the USB cable
+or restart the Windows adb server. The device can be back in stock while the host
+USB transport is still stale.
 
-## Debug Notes
+## Debug Markers
 
-Full-boot pstore markers:
+Persistent lean logs:
 
 ```text
-kexec-system-init: entered static /system/bin/kxsh
-kexec-system-init: mounted /data as f2fs
+/data/kexec/kxsh.log
+/data/kexec/adbd.log
+```
+
+Useful `kxsh.log` markers:
+
+```text
 kexec-system-init: entered /data/kexec/kxsh.sh
-kexec-system-init: creating rndis gadget / binding rndis gadget to 11201000.usb0
-USB_STATE=CONFIGURED
+kexec-system-init: setup_usb_adb: begin
+kexec-system-init: mounted adb FunctionFS
+kexec-system-init: starting lean adbd
+kexec-system-init: adbd published FunctionFS endpoints
+kexec-system-init: binding adb gadget to 11201000.usb0
 kexec-system-init: starting dropbear on 0.0.0.0:22
+kexec-system-init: panic cleanup: begin
 ```
 
-Decode a reset reason (MTK): `/proc/aed/reboot-reason` (e.g. `WDT status: 2` = AP
-watchdog timeout) and `/proc/cmdline` `aee_aed.pureason` / `poffreason` (these
-describe the *previous* reset). The live DTB carries per-boot fields the static base
-does not — patch the live one, never vendor_boot's base or the kernel-source `.dts`.
-
-Remaining work:
+Failure interpretation:
 
 ```text
+no /data/kexec/kxsh.log        did not reach kxsh; inspect pstore
+only ep0 in /dev/usb-ffs/adb   adbd did not write FunctionFS descriptors
+adb shows unauthorized         wrong adbd was installed or auth was not disabled
+stock adb needs replug         host USB transport stayed stale after kexec/panic
+```
+
+MTK reset reason is visible after returning to Android via `/proc/aed/reboot-reason`
+and `/proc/cmdline` fields such as `aee_aed.pureason` and `poffreason`; they describe
+the previous reset.
+
+## Remaining Work
+
+```text
+make kexec reach kxsh more consistently (single-kexec ~50%; retry covers it)
+bring up Docker in the lean runtime
 validate thermal throttling under sustained CPU load
-solve host-side USB/RNDIS route (then wifi)
-bring up Docker (cgroup v2, overlayfs) inside kxsh
-auto-kexec on Android boot (with retry + a debug-disable flag)
-module whitelist; narrow the always-on rails; bake the DTB patch into vendor_boot
-make slot handling automatic instead of hardcoding vendor_boot_a
+auto-kexec on Android boot with a debug-disable flag
+make slot handling automatic instead of assuming vendor_boot_a
 ```
