@@ -99,15 +99,29 @@ bash scripts/build_system_initrd.sh
 ```
 
 The lean `adbd` is frozen into `prebuilt/adbd` (the AOSP **recovery** variant --
-the only one built with the `LEAN_KEXEC_ADBD` marker). `scripts/install_adbd.sh`
-installs from there and refuses any `adbd` without that marker. Rebuild it only
-when the AOSP source changes:
+stock adb plus the `LEAN_KEXEC_ADBD` source patch). `scripts/install_adbd.sh`
+installs from there and refuses any `adbd` without that marker.
+
+The source changes (force auth off, keep root, USB-only transport, and guard out
+three threads that would each busy-loop a full CPU in the lean runtime) live in
+`patches/adbd-lean-kexec.patch`, **not** committed in the repo-managed AOSP tree
+where a `repo sync` could strand them. Apply them first -- required after a fresh
+checkout or re-sync, and idempotent otherwise:
+
+```bash
+cd /home/in/work/kernels
+bash scripts/apply_adbd_patch.sh
+```
+
+Then rebuild only when the source changes. Note: `m adbd` rebuilds the **apex**
+variant, not the recovery variant we ship -- target the recovery output path
+directly:
 
 ```bash
 cd /home/in/work/kernels/sources/android-12.1
 source build/envsetup.sh
 lunch aosp_arm64-eng
-m adbd
+m out/soong/.intermediates/packages/modules/adb/adbd/android_recovery_arm64_armv8-a/adbd
 cp out/soong/.intermediates/packages/modules/adb/adbd/android_recovery_arm64_armv8-a/adbd \
    /home/in/work/kernels/prebuilt/adbd
 ```

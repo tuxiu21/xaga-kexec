@@ -1,0 +1,155 @@
+diff --git a/daemon/auth.cpp b/daemon/auth.cpp
+index 2c3844b..386953e 100644
+--- a/daemon/auth.cpp
++++ b/daemon/auth.cpp
+@@ -16,6 +16,11 @@
+ 
+ #define TRACE_TAG AUTH
+ 
++// Lean USB-only adbd build flag. Mirrors the #define in daemon/main.cpp; this
++// translation unit needs its own copy because auth.cpp compiles into libadbd, a
++// separate module, so main.cpp's #define is not visible here.
++#define LEAN_KEXEC_ADBD 1
++
+ #include "sysdeps.h"
+ 
+ #include <resolv.h>
+@@ -246,12 +251,22 @@ void adbd_auth_init(void) {
+     cb.key_authorized = adbd_auth_key_authorized;
+     cb.key_removed = adbd_key_removed;
+     auth_ctx = adbd_auth_new(&cb);
++#if defined(LEAN_KEXEC_ADBD)
++    // Lean USB-only adbd has no Android property service or framework socket, so
++    // both adbd_auth_init side-threads busy-spin a whole CPU each: the adb_wifi
++    // observer runs while(true){WaitForProperty(...)} (which never blocks without
++    // a property service) and adbd_auth_run() keeps retrying the framework
++    // connection. auth is forced off (see main.cpp), so skip both; auth_ctx
++    // itself is still created for any incidental references.
++    LOG(INFO) << "LEAN_KEXEC_ADBD: skipping adb_wifi observer and adbd_auth framework thread";
++#else
+     adbd_wifi_init(auth_ctx);
+     std::thread([]() {
+         adb_thread_setname("adbd auth");
+         adbd_auth_run(auth_ctx);
+         LOG(FATAL) << "auth thread terminated";
+     }).detach();
++#endif
+ }
+ 
+ void send_auth_request(atransport* t) {
+diff --git a/daemon/main.cpp b/daemon/main.cpp
+index a200d28..7cfde20 100644
+--- a/daemon/main.cpp
++++ b/daemon/main.cpp
+@@ -15,6 +15,7 @@
+  */
+ 
+ #define TRACE_TAG ADB
++#define LEAN_KEXEC_ADBD 1
+ 
+ #include "sysdeps.h"
+ 
+@@ -28,6 +29,7 @@
+ #include <signal.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <string.h>
+ #include <sys/capability.h>
+ #include <sys/prctl.h>
+ 
+@@ -95,7 +97,7 @@ static bool should_drop_privileges() {
+     return drop;
+ }
+ 
+-static void drop_privileges(int server_port) {
++[[maybe_unused]] static void drop_privileges(int server_port) {
+     ScopedMinijail jail(minijail_new());
+ 
+     // Add extra groups:
+@@ -166,7 +168,7 @@ static void drop_privileges(int server_port) {
+ }
+ #endif
+ 
+-static void setup_adb(const std::vector<std::string>& addrs) {
++[[maybe_unused]] static void setup_adb(const std::vector<std::string>& addrs) {
+ #if defined(__ANDROID__)
+     // Get the first valid port from addrs and setup mDNS.
+     int port = -1;
+@@ -213,6 +215,11 @@ int adbd_main(int server_port) {
+     if (__android_log_is_debuggable() || device_unlocked) {
+         auth_required = android::base::GetBoolProperty("ro.adb.secure", false);
+     }
++#if defined(LEAN_KEXEC_ADBD)
++    (void)server_port;
++    auth_required = false;
++    LOG(INFO) << "LEAN_KEXEC_ADBD: forcing adb auth off";
++#endif
+ #endif
+ 
+     // Our external storage path may be different than apps, since
+@@ -226,13 +233,25 @@ int adbd_main(int server_port) {
+     }
+ 
+ #if defined(__ANDROID__)
++#if defined(LEAN_KEXEC_ADBD)
++    LOG(INFO) << "LEAN_KEXEC_ADBD: keeping root privileges";
++#else
+     drop_privileges(server_port);
+ #endif
++#endif
+ 
+ #if defined(__ANDROID__)
++#if defined(LEAN_KEXEC_ADBD)
++    // No property service in the lean kexec runtime: __system_property_area__ is null, so
++    // PropertyMonitor::Run() (spawned by watchdog::Initialize) busy-loops a full core because
++    // __system_property_wait() returns immediately instead of blocking. The watchdog is a no-op
++    // here anyway (persist.adb.watchdog is never set), so skip it entirely.
++    LOG(INFO) << "LEAN_KEXEC_ADBD: skipping watchdog (no property service -> would busy-loop)";
++#else
+     // A thread gets spawned as a side-effect of initializing the watchdog, so it needs to happen
+     // after we drop privileges.
+     watchdog::Initialize();
++#endif
+ #endif
+ 
+     // adbd_auth_init will spawn a thread, so we need to defer it until after selinux transitions.
+@@ -241,13 +260,31 @@ int adbd_main(int server_port) {
+     bool is_usb = false;
+ 
+ #if defined(__ANDROID__)
++#if defined(LEAN_KEXEC_ADBD)
++    int ep0_errno = 0;
++    if (access(USB_FFS_ADB_EP0, F_OK) != 0) {
++        ep0_errno = errno;
++        LOG(ERROR) << "LEAN_KEXEC_ADBD: " << USB_FFS_ADB_EP0
++                   << " not visible before usb_init: " << strerror(ep0_errno);
++    } else {
++        LOG(INFO) << "LEAN_KEXEC_ADBD: " << USB_FFS_ADB_EP0 << " visible before usb_init";
++    }
++    LOG(INFO) << "LEAN_KEXEC_ADBD: forcing usb_init";
++    usb_init();
++    is_usb = true;
++#else
+     if (access(USB_FFS_ADB_EP0, F_OK) == 0) {
+         // Listen on USB.
+         usb_init();
+         is_usb = true;
+     }
+ #endif
++#endif
+ 
++#if defined(LEAN_KEXEC_ADBD)
++    (void)is_usb;
++    LOG(INFO) << "LEAN_KEXEC_ADBD: USB-only mode; skipping TCP/vsock listeners";
++#else
+     // If one of these properties is set, also listen on that port.
+     // If one of the properties isn't set and we couldn't listen on usb, listen
+     // on the default port.
+@@ -284,6 +321,7 @@ int adbd_main(int server_port) {
+         addrs = android::base::Split(prop_addr, ",");
+         setup_adb(addrs);
+     }
++#endif
+ 
+     LOG(INFO) << "adbd started";
+ 
