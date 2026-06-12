@@ -40,6 +40,24 @@ log_ls()
     } >> "$LOG_FILE" 2>/dev/null
 }
 
+ensure_reasonable_time()
+{
+    min_epoch=1781272800
+    now="$("$BB" date +%s 2>/dev/null || echo 0)"
+    case "$now" in
+        ''|*[!0-9]*)
+            now=0
+            ;;
+    esac
+
+    if [ "$now" -lt "$min_epoch" ]; then
+        "$BB" date -u -s "2026-06-12 14:00:00" >/dev/null 2>&1 && \
+            log "time fallback applied: $("$BB" date -u 2>/dev/null)"
+    else
+        log "time ok: $("$BB" date -u 2>/dev/null)"
+    fi
+}
+
 mount_if_needed()
 {
     mp="$1"
@@ -113,14 +131,19 @@ start_watchdog_feeder()
         [ -e /dev/watchdog ] || "$BB" ln -s "/dev/$name" /dev/watchdog 2>/dev/null
     done
 
+    if [ -x "$DATA_BASE/watchdog_feeder" ]; then
+        "$DATA_BASE/watchdog_feeder" 5 &
+        log "watchdog C feeder started pid=$!"
+        return 0
+    fi
+
     (
         while true; do
-            [ -e /dev/watchdog ] && echo V > /dev/watchdog 2>/dev/null
             [ -e /dev/watchdog0 ] && echo V > /dev/watchdog0 2>/dev/null
             "$BB" sleep 5
         done
     ) &
-    log "watchdog feeder started"
+    log "watchdog shell feeder started"
 }
 
 cleanup_usb_before_panic()
@@ -317,6 +340,32 @@ setup_usb_adb()
     else
         log "skip UDC bind; cur=${cur:-empty} writable=$([ -w "$g/UDC" ] && echo yes || echo no)"
     fi
+
+    # Verify the host actually enumerated us. /sys/class/udc/$udc/state reads
+    # "configured" once the host has set our USB configuration. After a kexec
+    # (especially rapid retry churn) the host USB stack can go stale and never
+    # enumerate the fresh gadget: adbd then spins forever "waiting for
+    # FUNCTIONFS_BIND" and `adb devices` shows nothing even though lean is fine.
+    # Force a device-side re-plug -- drop then re-assert the UDC pull-up -- which
+    # the host sees as a disconnect+new-connect and re-enumerates. Only toggle
+    # when not yet "configured", so a normal fast enumeration is left untouched.
+    state_node="/sys/class/udc/$udc/state"
+    enumerated=0
+    for attempt in 1 2 3 4 5; do
+        "$BB" sleep 2
+        st="$("$BB" cat "$state_node" 2>/dev/null)"
+        if [ "$st" = "configured" ]; then
+            log "host enumerated (udc state=configured, attempt $attempt)"
+            enumerated=1
+            break
+        fi
+        log "not enumerated (udc state=${st:-unknown}, attempt $attempt); re-plugging UDC pull-up"
+        echo "" > "$g/UDC" 2>/dev/null
+        "$BB" sleep 1
+        echo "$udc" > "$g/UDC" 2>/dev/null
+    done
+    [ "$enumerated" = 1 ] || \
+        log "host still not enumerated after retries (udc state=$("$BB" cat "$state_node" 2>/dev/null))"
     log "setup_usb_adb: end"
 }
 
@@ -347,12 +396,24 @@ start_dropbear()
 : > "$LOG_FILE" 2>/dev/null
 log "entered /data/kexec/kxsh.sh"
 prepare_base
+ensure_reasonable_time
 prepare_accounts
 start_watchdog_feeder
 start_panic_timer
 setup_usb_adb
 start_dropbear
 log "ready; try adb shell, or adb forward tcp:2222 tcp:22"
+
+# One-shot on-boot debug hook: if the flag exists, run a probe script and dump
+# to /data/kexec (shared f2fs, survives the fall-back to stock). Decouples
+# bring-up tests from the intermittent host enumeration of the lean adb gadget.
+# The flag is removed first so it runs exactly once even across reboots.
+if [ -f /data/kexec/run_wifi_probe ]; then
+    "$BB" rm -f /data/kexec/run_wifi_probe
+    log "running one-shot wifi_probe5.sh"
+    "$BB" sh /data/kexec/wifi_probe5.sh >> "$LOG_FILE" 2>&1
+    log "wifi_probe5.sh done; see /data/kexec/wifi_probe5.log"
+fi
 
 while true; do
     "$BB" sleep 10
