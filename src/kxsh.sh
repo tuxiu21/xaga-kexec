@@ -103,6 +103,7 @@ prepare_accounts()
     echo 'root::0:0:root:/data/kexec/root:/data/kexec/sh' > /etc/passwd 2>/dev/null
     echo 'root:x:0:' > /etc/group 2>/dev/null
     echo 'root::10933:0:99999:7:::' > /etc/shadow 2>/dev/null
+    printf '/data/kexec/sh\n/bin/sh\n/system/bin/sh\n' > /etc/shells 2>/dev/null
     "$BB" chmod 644 /etc/passwd /etc/group 2>/dev/null
     "$BB" chmod 600 /etc/shadow 2>/dev/null
 
@@ -404,15 +405,19 @@ setup_usb_adb
 start_dropbear
 log "ready; try adb shell, or adb forward tcp:2222 tcp:22"
 
-# One-shot on-boot debug hook: if the flag exists, run a probe script and dump
-# to /data/kexec (shared f2fs, survives the fall-back to stock). Decouples
-# bring-up tests from the intermittent host enumeration of the lean adb gadget.
+# One-shot on-boot Wi-Fi hook: if the flag exists, run the bring-up script and
+# dump to /data/kexec (shared f2fs, survives the fall-back to stock).
 # The flag is removed first so it runs exactly once even across reboots.
 if [ -f /data/kexec/run_wifi_probe ]; then
     "$BB" rm -f /data/kexec/run_wifi_probe
-    log "running one-shot wifi_probe5.sh"
-    "$BB" sh /data/kexec/wifi_probe5.sh >> "$LOG_FILE" 2>&1
-    log "wifi_probe5.sh done; see /data/kexec/wifi_probe5.log"
+    probe=/data/kexec/wifi_bringup.sh
+    if [ -f "$probe" ]; then
+        log "running one-shot ${probe##*/}"
+        "$BB" sh "$probe" >> "$LOG_FILE" 2>&1
+        log "${probe##*/} done"
+    else
+        log "one-shot Wi-Fi requested but missing $probe"
+    fi
 fi
 
 while true; do

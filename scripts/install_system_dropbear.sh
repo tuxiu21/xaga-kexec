@@ -26,13 +26,18 @@ adb.exe push "$ROOT/prebuilt/dropbear" /data/local/tmp/dropbear
 adb.exe push "$ROOT/prebuilt/dropbearkey" /data/local/tmp/dropbearkey
 adb.exe push "$ROOT/output/watchdog_feeder" /data/local/tmp/watchdog_feeder
 adb.exe push "$ROOT/src/kxsh.sh" /data/local/tmp/kxsh.sh
+adb.exe push "$ROOT/scripts/wifi_bringup.sh" /data/local/tmp/wifi_bringup.sh
+adb.exe push "$ROOT/scripts/enter_ubuntu.sh" /data/local/tmp/enter-ubuntu.sh
 
 adb.exe shell "su -c 'cp /data/local/tmp/busybox.kexec /data/kexec/busybox'"
 adb.exe shell "su -c 'cp /data/local/tmp/dropbear /data/kexec/dropbear'"
 adb.exe shell "su -c 'cp /data/local/tmp/dropbearkey /data/kexec/dropbearkey'"
 adb.exe shell "su -c 'cp /data/local/tmp/watchdog_feeder /data/kexec/watchdog_feeder'"
 adb.exe shell "su -c 'cp /data/local/tmp/kxsh.sh /data/kexec/kxsh.sh'"
-adb.exe shell "su -c 'chmod 0755 /data/kexec/busybox /data/kexec/dropbear /data/kexec/dropbearkey /data/kexec/watchdog_feeder /data/kexec/kxsh.sh'"
+adb.exe shell "su -c 'cp /data/local/tmp/wifi_bringup.sh /data/kexec/wifi_bringup.sh'"
+adb.exe shell "su -c 'cp /data/local/tmp/enter-ubuntu.sh /data/kexec/enter-ubuntu.sh'"
+adb.exe shell "su -c 'chmod 0755 /data/kexec/busybox /data/kexec/dropbear /data/kexec/dropbearkey /data/kexec/watchdog_feeder /data/kexec/kxsh.sh /data/kexec/wifi_bringup.sh /data/kexec/enter-ubuntu.sh'"
+adb.exe shell "su -c '/data/kexec/busybox ln -sf /data/kexec/enter-ubuntu.sh /data/kexec/enter_ubuntu.sh'"
 adb.exe shell "su -c '/data/kexec/busybox ln -sf /data/kexec/busybox /data/kexec/sh'"
 
 "$ROOT/scripts/install_adbd.sh"

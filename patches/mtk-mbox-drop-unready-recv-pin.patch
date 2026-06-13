@@ -1,0 +1,45 @@
+diff --git a/drivers/soc/mediatek/mtk-mbox.c b/drivers/soc/mediatek/mtk-mbox.c
+index 84379ccda..106ac906c 100644
+--- a/drivers/soc/mediatek/mtk-mbox.c
++++ b/drivers/soc/mediatek/mtk-mbox.c
+@@ -544,9 +544,10 @@ static irqreturn_t mtk_mbox_isr(int irq, void *dev_id)
+ 			irq_temp = irq_temp | (0x1 << pin_recv->pin_index);
+ 			/*check user buf*/
+ 			if (!pin_recv->pin_buf) {
+-				pr_err("[MBOX Error]null ptr dev=%s ipi_id=%d",
+-					mbdev->name, pin_recv->chan_id);
+-				BUG_ON(1);
++				pr_err_ratelimited("[MBOX Error]drop unready recv pin dev=%s ipi_id=%d mbox=%u pin=%u\n",
++					mbdev->name, pin_recv->chan_id,
++					mbox, pin_recv->pin_index);
++				continue;
+ 			}
+ 			if (minfo->opt == MBOX_OPT_QUEUE_DIR ||
+ 			 minfo->opt == MBOX_OPT_QUEUE_SMEM) {
+@@ -629,17 +630,21 @@ static irqreturn_t mtk_mbox_isr(int irq, void *dev_id)
+ 
+ 	/*clear irq status*/
+ 	spin_lock_irqsave(&minfo->mbox_lock, flags);
+-	mtk_mbox_clr_irq(mbdev, mbox, irq_temp);
++	mtk_mbox_clr_irq(mbdev, mbox, irq_status);
+ 	/*release pin*/
+ 	mtk_mbox_set_lock(mbdev, mbox, MBOX_DONE);
+ 	spin_unlock_irqrestore(&minfo->mbox_lock, flags);
+ 
+ 	if (irq_temp == 0 && irq_status != 0) {
+-		pr_err("[MBOX ISR]dev=%s pin table err, status=%x",
++		pr_err_ratelimited("[MBOX ISR]dev=%s drop unmatched recv irq status=%x mbox=%u\n",
++			mbdev->name, irq_status, mbox);
++		if (mbdev->log_enable) {
++			pr_err("[MBOX ISR]dev=%s pin table err, status=%x",
+ 			mbdev->name, irq_status);
+-		for (i = 0; i < mbdev->recv_count; i++) {
+-			pin_recv = &(mbdev->pin_recv_table[i]);
+-			mtk_mbox_dump_recv_pin(mbdev, pin_recv);
++			for (i = 0; i < mbdev->recv_count; i++) {
++				pin_recv = &(mbdev->pin_recv_table[i]);
++				mtk_mbox_dump_recv_pin(mbdev, pin_recv);
++			}
+ 		}
+ 	}
+ 

@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Boot/capture loop for the adb-over-USB lean system.
 #
-# Mirrors kexec_dropbear_until_new.sh, but the success signal is the LEAN adbd
-# enumerating over USB -- the host adb server sees serial 0123456789abcdef --
-# not SSH. Every round also pulls /data/kexec/kxsh.log and adbd.log: those live
-# on the shared /data f2fs, so stock Android can read what the lean boot wrote,
-# which lets us tell whether we reached kxsh and whether adbd published ep1/ep2.
+# Boot/capture loop for the lean ADB system. The success signal is the LEAN adbd
+# enumerating over USB -- the host adb server sees serial 0123456789abcdef.
+# Every round also pulls /data/kexec/kxsh.log and adbd.log: those live on the
+# shared /data f2fs, so stock Android can read what the lean boot wrote.
 #
 # Outcomes:
 #   - lean adb up                 -> success (exit 0)
