@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ROOT:-/home/in/work/kernels}"
-ADB="${ADB:-adb.exe}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+
 ADBKEY_PUB="${ADBKEY_PUB:-/mnt/c/Users/Rin/.android/adbkey.pub}"
 CLEAR_BCB=1
 
@@ -65,7 +65,7 @@ if [ "$bootmode" != "recovery" ]; then
 fi
 
 ts="$(date +%Y%m%d_%H%M%S)"
-backup_dir="$ROOT/logs/force_stock_adb_$ts"
+backup_dir="$LOG_ROOT/force_stock_adb_$ts"
 tmp="$(mktemp -d)"
 cleanup()
 {

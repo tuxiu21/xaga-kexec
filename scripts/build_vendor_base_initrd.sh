@@ -1,18 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="/home/in/work/kernels"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
 
-adb.exe shell getprop ro.boot.slot_suffix
+"$ADB" shell getprop ro.boot.slot_suffix
 
-adb.exe shell "su -c 'dd if=/dev/block/by-name/vendor_boot_a of=/data/local/tmp/vendor_boot_a.img bs=4M'"
-adb.exe pull /data/local/tmp/vendor_boot_a.img "$ROOT/vendor/vendor_boot_a.img"
+"$ADB" shell "su -c 'dd if=/dev/block/by-name/vendor_boot_a of=/data/local/tmp/vendor_boot_a.img bs=4M'"
+"$ADB" pull /data/local/tmp/vendor_boot_a.img "$VENDOR_DIR/vendor_boot_a.img"
 
-cd "$ROOT/vendor"
-magiskboot unpack vendor_boot_a.img
+cd "$VENDOR_DIR"
+magiskboot unpack vendor_boot_a.img || true
+if [ ! -s "$VENDOR_DIR/ramdisk.cpio" ]; then
+  echo "magiskboot did not produce $VENDOR_DIR/ramdisk.cpio" >&2
+  exit 1
+fi
 
-cd /tmp
-cp "$ROOT/vendor/ramdisk.cpio" ramdisk.cpio
+work="$(mktemp -d "$TMP_ROOT/vendor_base.XXXXXX")"
+cleanup()
+{
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
+cd "$work"
+cp "$VENDOR_DIR/ramdisk.cpio" ramdisk.cpio
 
 magiskboot cpio ramdisk.cpio \
   'extract lib/modules/mt6315-regulator.ko mt6315-regulator.ko'
@@ -37,15 +48,15 @@ magiskboot cpio ramdisk.cpio \
   'add 0644 lib/modules/modules.load.recovery modules.load.recovery' \
   'add 0644 lib/modules/modules.dep modules.dep'
 
-cp ramdisk.cpio "$ROOT/vendor/ramdisk_patched.cpio"
+cp ramdisk.cpio "$VENDOR_DIR/ramdisk_patched.cpio"
 
-cd "$ROOT/vendor"
+cd "$VENDOR_DIR"
 magiskboot compress=lz4_legacy ramdisk_patched.cpio vendor_ramdisk_patched.lz4
 
-cat "$ROOT/unpack_gki/ramdisk" \
-  "$ROOT/vendor/vendor_ramdisk_patched.lz4" \
-  > "$ROOT/output/combined_ramdisk_known_good_base.lz4"
+cat "$UNPACK_GKI_DIR/ramdisk" \
+  "$VENDOR_DIR/vendor_ramdisk_patched.lz4" \
+  > "$OUTPUT_DIR/combined_ramdisk_known_good_base.lz4"
 
-ls -lh "$ROOT/vendor/ramdisk_patched.cpio" \
-  "$ROOT/vendor/vendor_ramdisk_patched.lz4" \
-  "$ROOT/output/combined_ramdisk_known_good_base.lz4"
+ls -lh "$VENDOR_DIR/ramdisk_patched.cpio" \
+  "$VENDOR_DIR/vendor_ramdisk_patched.lz4" \
+  "$OUTPUT_DIR/combined_ramdisk_known_good_base.lz4"

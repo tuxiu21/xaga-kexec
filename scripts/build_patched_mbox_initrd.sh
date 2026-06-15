@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ROOT:-/home/in/work/kernels}"
-AK="${AK:-$ROOT/sources/android-kernel}"
-XIAOMI="${XIAOMI:-$ROOT/sources/Xiaomi_Kernel_OpenSource}"
-OUT="${OUT:-$ROOT/output/mtk-mbox-ext}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+
+OUT="${OUT:-$OUTPUT_DIR/mtk-mbox-ext}"
 KOUT="${KOUT:-$AK/out/android12-5.10/common}"
 CLANG_BIN="${CLANG_BIN:-$AK/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin}"
-VENDOR_CPIO="${VENDOR_CPIO:-$ROOT/vendor/ramdisk_patched.cpio}"
-GKI_RAMDISK="${GKI_RAMDISK:-$ROOT/unpack_gki/ramdisk}"
-INITRD_OUT="${INITRD_OUT:-$ROOT/output/combined_ramdisk_kexec_system_mbox.lz4}"
-VENDOR_CPIO_OUT="${VENDOR_CPIO_OUT:-$ROOT/vendor/ramdisk_patched_mbox.cpio}"
+VENDOR_CPIO="${VENDOR_CPIO:-$VENDOR_DIR/ramdisk_patched.cpio}"
+GKI_RAMDISK="${GKI_RAMDISK:-$UNPACK_GKI_DIR/ramdisk}"
+INITRD_OUT="${INITRD_OUT:-$OUTPUT_DIR/combined_ramdisk_kexec_system_mbox.lz4}"
+VENDOR_CPIO_OUT="${VENDOR_CPIO_OUT:-$VENDOR_DIR/ramdisk_patched_mbox.cpio}"
+BLOCKTAG_KO="${BLOCKTAG_KO:-$BLOCKTAG_BUILD_DIR/blocktag.ko}"
 
 rm -rf "$OUT"
 mkdir -p "$OUT/linux/soc/mediatek"
@@ -46,6 +46,9 @@ mkdir -p "$work/vendor_root"
   cpio -idm < "$VENDOR_CPIO" >/dev/null 2>&1
   rm -f init
   cp "$OUT/mtk-mbox.stripped.ko" lib/modules/mtk-mbox.ko
+  if [ -s "$BLOCKTAG_KO" ]; then
+    cp "$BLOCKTAG_KO" lib/modules/blocktag.ko
+  fi
   find . | cpio -o -H newc > "$work/vendor_mbox.cpio" 2>/dev/null
 )
 
@@ -64,4 +67,8 @@ magiskboot compress=lz4_legacy "$work/vendor_mbox.cpio" "$work/vendor_ramdisk_mb
 
 cp "$work/vendor_mbox.cpio" "$VENDOR_CPIO_OUT"
 modinfo "$OUT/mtk-mbox.stripped.ko" | sed -n '1,20p'
+if [ -s "$BLOCKTAG_KO" ]; then
+  echo "included blocktag: $BLOCKTAG_KO"
+  modinfo "$BLOCKTAG_KO" | sed -n '1,20p'
+fi
 ls -lh "$OUT/mtk-mbox.stripped.ko" "$VENDOR_CPIO_OUT" "$INITRD_OUT"

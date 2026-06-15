@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ROOT:-/home/in/work/kernels}"
-ADB="${ADB:-adb.exe}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+
 # Single source of truth: the LEAN AOSP adbd is frozen into prebuilt/adbd
 # (the recovery variant -- the only one built with LEAN_KEXEC_ADBD). Regenerate
 # it from AOSP with the commands printed below if prebuilt/adbd is ever missing.
 ADBD="${ADBD:-$ROOT/prebuilt/adbd}"
-RAMDISK="${RAMDISK:-$ROOT/vendor/ramdisk_patched.cpio}"
+RAMDISK="${RAMDISK:-$VENDOR_DIR/ramdisk_patched.cpio}"
 
 runtime=(
   system/bin/linker64
@@ -28,7 +28,7 @@ runtime=(
 if [ ! -s "$ADBD" ]; then
   echo "missing lean adbd: $ADBD" >&2
   echo "regenerate it from the AOSP recovery build:" >&2
-  echo "  cd $ROOT/sources/android-12.1 && source build/envsetup.sh && lunch aosp_arm64-eng && m adbd" >&2
+  echo "  cd $AOSP_DIR && source build/envsetup.sh && lunch aosp_arm64-eng && m adbd" >&2
   echo "  cp out/soong/.intermediates/packages/modules/adb/adbd/android_recovery_arm64_armv8-a/adbd $ROOT/prebuilt/adbd" >&2
   exit 1
 fi

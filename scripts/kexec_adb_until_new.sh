@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Boot/capture loop for the adb-over-USB lean system.
-#
 # Boot/capture loop for the lean ADB system. The success signal is the LEAN adbd
 # enumerating over USB -- the host adb server sees serial 0123456789abcdef.
 # Every round also pulls /data/kexec/kxsh.log and adbd.log: those live on the
@@ -12,8 +10,9 @@
 #   - early death before kxsh      -> retry (kxsh.log stays empty; pstore tail)
 set -u
 
-ADB=adb.exe
-INITRD="${1:-output/combined_ramdisk_kexec_system.lz4}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+
+INITRD="${1:-$OUTPUT_DIR/combined_ramdisk_kexec_system_mbox.lz4}"
 INITRD_DEV="$(basename "$INITRD")"
 # Patched DTB with regulator-always-on (avoids the ~31.7s regulator-cleanup
 # death). Set DTB_DEV= (empty) to reuse the device's live FDT instead.
@@ -22,7 +21,7 @@ MAX="${2:-8}"
 LEAN_SERIAL="${LEAN_SERIAL:-0123456789abcdef}"
 PANIC_AFTER="${PANIC_AFTER:-60}"
 NOEXEC_MAX="${NOEXEC_MAX:-3}"
-OUT="/home/in/work/kernels/logs/kexec_adb_until_new_$(date +%Y%m%d_%H%M%S)"
+OUT="$LOG_ROOT/kexec_adb_until_new_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$OUT"
 
 STOCK_SERIAL=""
@@ -80,7 +79,7 @@ for r in $(seq 1 "$MAX"); do
     $ADB shell "su -c 'rm -f /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-*; : > /data/kexec/kxsh.log; : > /data/kexec/adbd.log; echo $PANIC_AFTER > /data/kexec/panic_after'" >/dev/null 2>&1
 
     base_cmdline="$($ADB shell "su -c 'cat /proc/cmdline'" 2>/dev/null | tr -d '\r\n')"
-    initrd_local="$INITRD"; case "$initrd_local" in /*) ;; *) initrd_local="/home/in/work/kernels/$INITRD";; esac
+    initrd_local="$INITRD"; case "$initrd_local" in /*) ;; *) initrd_local="$ROOT/$INITRD";; esac
     if [ -f "$initrd_local" ]; then
         initrd_kib="$(( ($(wc -c < "$initrd_local") + 1023) / 1024 ))"
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )debug_ext\\.initrd_size=[^ ]*/ /g")"

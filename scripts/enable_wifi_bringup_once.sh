@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ROOT:-/home/in/work/kernels}"
-ADB="${ADB:-adb.exe}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+
 PANIC_AFTER="${PANIC_AFTER:-300}"
 
 "$ADB" wait-for-device

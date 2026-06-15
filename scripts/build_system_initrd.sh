@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="/home/in/work/kernels"
-GKI_RAMDISK="$ROOT/unpack_gki/ramdisk"
-VENDOR_CPIO="$ROOT/vendor/ramdisk_patched.cpio"
-VENDOR_LZ4="$ROOT/vendor/vendor_ramdisk_system.lz4"
-OUT="$ROOT/output/combined_ramdisk_kexec_system.lz4"
-WORK="/tmp/kexec_system_initrd"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
 
-rm -rf "$WORK"
-mkdir -p "$WORK"
+GKI_RAMDISK="$UNPACK_GKI_DIR/ramdisk"
+VENDOR_CPIO="$VENDOR_DIR/ramdisk_patched.cpio"
+VENDOR_LZ4="$VENDOR_DIR/vendor_ramdisk_system.lz4"
+OUT="$OUTPUT_DIR/combined_ramdisk_kexec_system.lz4"
+WORK="$(mktemp -d "$TMP_ROOT/kexec_system_initrd.XXXXXX")"
+
+cleanup()
+{
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+
 cd "$WORK"
 
 cp "$VENDOR_CPIO" vendor.cpio

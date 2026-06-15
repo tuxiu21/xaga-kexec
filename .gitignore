@@ -1,22 +1,18 @@
-# Recycle bin and test logs
+# Recycle bin and generated local state
 /old/
-/logs/
+/work/
+/local/
 
 # Large external source trees and nested repositories
 /sources/
 
-# Generated artifacts
-/output/
+# Standalone rootfs archive
 /ubuntu-rootfs.tar.gz
 *.img
 *.lz4
 *.cpio
 *.dtb
 *.zip
-
-# Extracted boot/vendor inputs
-/vendor/
-/unpack_gki/
 
 # Local/editor files
 .DS_Store
