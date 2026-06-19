@@ -2,12 +2,12 @@
 # Build the Android GKI kernel while keeping verbose output under work/logs/.
 #
 # Useful knobs:
-#   TAIL_LINES=120 scripts/build_gki_logged.sh   # print last N lines at finish
-#   FOLLOW=1 scripts/build_gki_logged.sh         # stream the log while building
+#   TAIL_LINES=120 scripts/host/build_gki_logged.sh   # print last N lines at finish
+#   FOLLOW=1 scripts/host/build_gki_logged.sh         # stream the log while building
 
 set -u
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 OUT="$LOG_ROOT/gki_build_$(date +%Y%m%d_%H%M%S)"
 LOG="$OUT/build.log"

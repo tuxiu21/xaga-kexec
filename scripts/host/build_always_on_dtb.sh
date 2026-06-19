@@ -7,7 +7,7 @@
 # rails regulator-always-on in the live DTB makes cleanup skip them.
 set -euo pipefail
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 LIBFDT="$XIAOMI/scripts/dtc/libfdt"
 TOOL="$TMP_ROOT/dtb_always_on"

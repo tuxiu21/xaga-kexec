@@ -3,7 +3,7 @@
 
 set -u
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 show_git()
 {

@@ -405,6 +405,16 @@ setup_usb_adb
 start_dropbear
 log "ready; try adb shell, or adb forward tcp:2222 tcp:22"
 
+if [ -f /data/kexec/boot_ubuntu_ext4.once ]; then
+    "$BB" rm -f /data/kexec/boot_ubuntu_ext4.once
+    "$BB" sync 2>/dev/null
+    if [ -x /data/kexec/boot_ubuntu_ext4 ]; then
+        log "boot_ubuntu_ext4 flag present; switching root"
+        exec /data/kexec/boot_ubuntu_ext4
+    fi
+    log "boot_ubuntu_ext4 flag present but binary is missing"
+fi
+
 # One-shot on-boot Wi-Fi hook: if the flag exists, run the bring-up script and
 # dump to /data/kexec (shared f2fs, survives the fall-back to stock).
 # The flag is removed first so it runs exactly once even across reboots.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 ADBKEY_PUB="${ADBKEY_PUB:-/mnt/c/Users/Rin/.android/adbkey.pub}"
 CLEAR_BCB=1

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 OUT="${OUT:-$OUTPUT_DIR/mtk-mbox-ext}"
 KOUT="${KOUT:-$AK/out/android12-5.10/common}"

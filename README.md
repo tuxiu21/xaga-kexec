@@ -39,7 +39,7 @@ system and can now be reached over Wi-Fi once `wlan0` is up.
   disabled. KernelSU exec hooks crashed this guest kernel during Docker startup.
 - The stock `blocktag.ko` is not ABI-safe after enabling options such as
   `CONFIG_SYSVIPC`; rebuild it against the current GKI output with
-  `scripts/build_blocktag_ko.sh` and include it in the mbox initrd.
+  `scripts/host/build_blocktag_ko.sh` and include it in the mbox initrd.
 
 ## Requirements
 
@@ -182,28 +182,33 @@ work/       generated local state
 Build:
 
 ```text
-scripts/build_gki_logged.sh
+scripts/host/build_gki_logged.sh
     Builds the Android GKI kernel and writes full logs under work/logs.
 
-scripts/build_gki_base_initrd.sh
+scripts/host/build_gki_base_initrd.sh
     Extracts the GKI ramdisk from GKI_BOOT_IMAGE, defaulting to
     local/boot-5.10.img, into work/unpack_gki/ramdisk.
 
-scripts/build_blocktag_ko.sh
+scripts/host/build_blocktag_ko.sh
     Builds replacement blocktag.ko into work/tmp/blocktag_build.
 
-scripts/build_vendor_base_initrd.sh
+scripts/host/build_vendor_base_initrd.sh
     Pulls vendor_boot_a from the device and creates work/vendor/ramdisk_patched.cpio.
 
-scripts/build_system_initrd.sh
+scripts/host/build_system_initrd.sh
     Builds work/output/combined_ramdisk_kexec_system.lz4 for normal lean ADB/Dropbear.
 
-scripts/build_patched_mbox_initrd.sh
+scripts/host/build_patched_mbox_initrd.sh
     Rebuilds patched mtk-mbox.ko, replaces it in the vendor ramdisk, and builds
     work/output/combined_ramdisk_kexec_system_mbox.lz4 for Wi-Fi bring-up. If
     work/tmp/blocktag_build/blocktag.ko exists, it is included too.
 
-scripts/build_always_on_dtb.sh
+scripts/host/build_ubuntu_ext4.sh
+    Converts ubuntu-rootfs.tar.gz into work/rootfs/ubuntu.ext4. Defaults to a
+    16G sparse ext4 image and uses fakeroot + mkfs.ext4 -d when available, so
+    host sudo is not required.
+
+scripts/host/build_always_on_dtb.sh
     Pulls the live device DTB, marks required regulators always-on, and pushes
     patched.dtb to /data/local/tmp.
 ```
@@ -211,48 +216,60 @@ scripts/build_always_on_dtb.sh
 Install and boot:
 
 ```text
-scripts/install_system_dropbear.sh
+scripts/host/install_system_dropbear.sh
     Installs /system/bin/kxsh, /data/kexec runtime files, lean adbd, Dropbear,
-    wifi_bringup.sh, and enter-ubuntu.sh. Also installs the kexec payload.
+    boot_ubuntu_ext4, wifi_bringup.sh, and enter-ubuntu.sh. Also installs
+    the kexec payload.
 
-scripts/install_kexec_payload.sh
+scripts/host/install_ubuntu_ext4.sh
+    Pushes work/rootfs/ubuntu.ext4 and boot_ubuntu_ext4 into /data/kexec.
+
+scripts/host/install_kexec_payload.sh
     Pushes the current GKI dist/Image, kexec binary, selected initrd, and
     patched.dtb. Set KERNEL_IMAGE=... to override.
 
-scripts/install_adbd.sh
+scripts/host/install_adbd.sh
     Installs prebuilt/adbd plus runtime linker/libs.
 
-scripts/enable_wifi_bringup_once.sh
+scripts/host/enable_wifi_bringup_once.sh
     Sets /data/kexec/run_wifi_probe so the next lean boot runs wifi_bringup.sh.
 
-scripts/kexec_adb_until_new.sh
+scripts/host/kexec_adb_until_new.sh
     Boots and captures retries until lean ADB enumerates. Defaults to the mbox
-    initrd.
+    initrd. Set BOOT_UBUNTU_EXT4_ONCE=1 to make the next lean boot loop-mount
+    /data/kexec/ubuntu.ext4 and switch_roots into it. The current default init
+    target is /data/kexec/ubuntu_phase_a_init.sh, which writes validation logs
+    and then panics back to stock Android.
 ```
 
 Runtime tests:
 
 ```text
-scripts/ubuntu_docker_smoke.sh
+scripts/host/ubuntu_docker_smoke.sh
     Starts Docker inside the Lean Ubuntu rootfs and runs an offline container.
 
-scripts/wifi_bringup.sh
+scripts/device/wifi_bringup.sh
     Device-side Wi-Fi module/probe script.
 
-scripts/enter_ubuntu.sh
+scripts/device/enter_ubuntu.sh
     Device-side Ubuntu chroot entry script.
+
+scripts/device/ubuntu_phase_a_init.sh
+    Device-side Ubuntu switch-root validation init. Starts the Ubuntu-stage
+    watchdog feeder, writes validation logs, and currently panics back to stock
+    Android.
 ```
 
 Maintenance:
 
 ```text
-scripts/check_sources.sh
+scripts/host/check_sources.sh
     Prints local source-tree and key build-output status.
 
-scripts/apply_adbd_patch.sh
+scripts/host/apply_adbd_patch.sh
     Applies the lean adbd patch to the AOSP adb source tree.
 
-scripts/force_stock_adb_recovery.sh
+scripts/host/force_stock_adb_recovery.sh
     Recovery-side helper to restore stock Android ADB access.
 ```
 
@@ -264,20 +281,20 @@ Build the base vendor ramdisk when `vendor_boot_a` changes:
 
 ```bash
 cd /home/in/work/kernels
-bash scripts/build_gki_base_initrd.sh
-bash scripts/build_vendor_base_initrd.sh
+bash scripts/host/build_gki_base_initrd.sh
+bash scripts/host/build_vendor_base_initrd.sh
 ```
 
 Build the normal lean initrd:
 
 ```bash
-bash scripts/build_system_initrd.sh
+bash scripts/host/build_system_initrd.sh
 ```
 
 Build the Wi-Fi-capable initrd:
 
 ```bash
-bash scripts/build_patched_mbox_initrd.sh
+bash scripts/host/build_patched_mbox_initrd.sh
 ```
 
 `build_patched_mbox_initrd.sh` is the Wi-Fi-specialized equivalent of
@@ -287,9 +304,9 @@ bash scripts/build_patched_mbox_initrd.sh
 Build the Docker test kernel and replacement `blocktag.ko`:
 
 ```bash
-bash scripts/build_gki_logged.sh
-bash scripts/build_blocktag_ko.sh
-bash scripts/build_patched_mbox_initrd.sh
+bash scripts/host/build_gki_logged.sh
+bash scripts/host/build_blocktag_ko.sh
+bash scripts/host/build_patched_mbox_initrd.sh
 ```
 
 The kernel build log is written under `work/logs/gki_build_*`. Use `TAIL_LINES=120`
@@ -303,7 +320,7 @@ repo sync:
 
 ```bash
 cd /home/in/work/kernels
-bash scripts/apply_adbd_patch.sh
+bash scripts/host/apply_adbd_patch.sh
 ```
 
 Rebuild only when the adbd source changes:
@@ -321,11 +338,11 @@ Install the runtime payload:
 
 ```bash
 cd /home/in/work/kernels
-bash scripts/install_system_dropbear.sh
+bash scripts/host/install_system_dropbear.sh
 ```
 
-That script also runs `scripts/install_kexec_payload.sh` and
-`scripts/install_adbd.sh`.
+That script also runs `scripts/host/install_kexec_payload.sh` and
+`scripts/host/install_adbd.sh`.
 
 ## Boot
 
@@ -333,16 +350,16 @@ Default lean ADB boot, using the mbox/Wi-Fi initrd:
 
 ```bash
 cd /home/in/work/kernels
-PANIC_AFTER=300 bash scripts/kexec_adb_until_new.sh
+PANIC_AFTER=300 bash scripts/host/kexec_adb_until_new.sh
 ```
 
 Wi-Fi boot with one-shot bring-up:
 
 ```bash
 cd /home/in/work/kernels
-bash scripts/build_patched_mbox_initrd.sh
-PANIC_AFTER=300 bash scripts/enable_wifi_bringup_once.sh
-PANIC_AFTER=300 bash scripts/kexec_adb_until_new.sh
+bash scripts/host/build_patched_mbox_initrd.sh
+PANIC_AFTER=300 bash scripts/host/enable_wifi_bringup_once.sh
+PANIC_AFTER=300 bash scripts/host/kexec_adb_until_new.sh
 ```
 
 A successful lean ADB transport enumerates as:
@@ -406,7 +423,7 @@ Run the current offline Docker smoke test after lean ADB is up:
 
 ```bash
 cd /home/in/work/kernels
-bash scripts/ubuntu_docker_smoke.sh
+bash scripts/host/ubuntu_docker_smoke.sh
 ```
 
 Expected marker:
@@ -491,8 +508,10 @@ the previous reset.
 ## Layout
 
 ```text
-src/                        lean init shim and runtime shell
-scripts/                    current build/install/boot helpers
+src/                        lean init shim, watchdog feeder, and switch-root helpers
+scripts/host/               host-side build/install/boot/test helpers
+scripts/device/             device-side scripts pushed into /data/kexec
+scripts/lib/                shared host-side shell configuration
 patches/                    source patches kept outside repo-managed trees
 prebuilt/                   busybox, adbd, dropbear, dropbearkey
 sources/                    AOSP/kernel/tool source trees

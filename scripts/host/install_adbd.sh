@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 # Single source of truth: the LEAN AOSP adbd is frozen into prebuilt/adbd
 # (the recovery variant -- the only one built with LEAN_KEXEC_ADBD). Regenerate

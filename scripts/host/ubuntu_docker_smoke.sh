@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 SERIAL="${SERIAL:-0123456789abcdef}"
 ROOTFS="${ROOTFS:-/data/kexec/ubuntu-rootfs}"

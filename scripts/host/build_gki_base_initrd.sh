@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 if [ ! -s "$GKI_BOOT_IMAGE" ]; then
   echo "missing GKI boot image: $GKI_BOOT_IMAGE" >&2
@@ -16,8 +16,11 @@ cp "$GKI_BOOT_IMAGE" "$boot_img"
 
 (
   cd "$UNPACK_GKI_DIR"
-  rm -f kernel ramdisk boot_signature header
+  rm -f kernel ramdisk ramdisk.cpio boot_signature header
   magiskboot unpack "$boot_img" || true
+  if [ ! -s ramdisk ] && [ -s ramdisk.cpio ]; then
+    magiskboot compress=lz4_legacy ramdisk.cpio ramdisk
+  fi
 )
 
 if [ ! -s "$UNPACK_GKI_DIR/ramdisk" ]; then

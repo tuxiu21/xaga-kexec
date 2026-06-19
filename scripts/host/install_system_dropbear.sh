@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
-"$ROOT/scripts/install_kexec_payload.sh"
+"$ROOT/scripts/host/install_kexec_payload.sh"
 
 aarch64-linux-gnu-gcc -static -Os -s \
   -o "$OUTPUT_DIR/system_kxsh.elf" \
@@ -12,6 +12,10 @@ aarch64-linux-gnu-gcc -static -Os -s \
 aarch64-linux-gnu-gcc -static -Os -s \
   -o "$OUTPUT_DIR/watchdog_feeder" \
   "$ROOT/src/watchdog_feeder.c"
+
+aarch64-linux-gnu-gcc -static -Os -s \
+  -o "$OUTPUT_DIR/boot_ubuntu_ext4" \
+  "$ROOT/src/boot_ubuntu_ext4.c"
 
 "$ADB" push "$OUTPUT_DIR/system_kxsh.elf" /data/local/tmp/kxsh.elf
 "$ADB" shell "su -c 'mount -o rw,remount /'"
@@ -25,22 +29,26 @@ aarch64-linux-gnu-gcc -static -Os -s \
 "$ADB" push "$ROOT/prebuilt/dropbear" /data/local/tmp/dropbear
 "$ADB" push "$ROOT/prebuilt/dropbearkey" /data/local/tmp/dropbearkey
 "$ADB" push "$OUTPUT_DIR/watchdog_feeder" /data/local/tmp/watchdog_feeder
+"$ADB" push "$OUTPUT_DIR/boot_ubuntu_ext4" /data/local/tmp/boot_ubuntu_ext4
 "$ADB" push "$ROOT/src/kxsh.sh" /data/local/tmp/kxsh.sh
-"$ADB" push "$ROOT/scripts/wifi_bringup.sh" /data/local/tmp/wifi_bringup.sh
-"$ADB" push "$ROOT/scripts/enter_ubuntu.sh" /data/local/tmp/enter-ubuntu.sh
+"$ADB" push "$ROOT/scripts/device/ubuntu_phase_a_init.sh" /data/local/tmp/ubuntu_phase_a_init.sh
+"$ADB" push "$ROOT/scripts/device/wifi_bringup.sh" /data/local/tmp/wifi_bringup.sh
+"$ADB" push "$ROOT/scripts/device/enter_ubuntu.sh" /data/local/tmp/enter-ubuntu.sh
 
 "$ADB" shell "su -c 'cp /data/local/tmp/busybox.kexec /data/kexec/busybox'"
 "$ADB" shell "su -c 'cp /data/local/tmp/dropbear /data/kexec/dropbear'"
 "$ADB" shell "su -c 'cp /data/local/tmp/dropbearkey /data/kexec/dropbearkey'"
 "$ADB" shell "su -c 'cp /data/local/tmp/watchdog_feeder /data/kexec/watchdog_feeder'"
+"$ADB" shell "su -c 'cp /data/local/tmp/boot_ubuntu_ext4 /data/kexec/boot_ubuntu_ext4'"
 "$ADB" shell "su -c 'cp /data/local/tmp/kxsh.sh /data/kexec/kxsh.sh'"
+"$ADB" shell "su -c 'cp /data/local/tmp/ubuntu_phase_a_init.sh /data/kexec/ubuntu_phase_a_init.sh'"
 "$ADB" shell "su -c 'cp /data/local/tmp/wifi_bringup.sh /data/kexec/wifi_bringup.sh'"
 "$ADB" shell "su -c 'cp /data/local/tmp/enter-ubuntu.sh /data/kexec/enter-ubuntu.sh'"
-"$ADB" shell "su -c 'chmod 0755 /data/kexec/busybox /data/kexec/dropbear /data/kexec/dropbearkey /data/kexec/watchdog_feeder /data/kexec/kxsh.sh /data/kexec/wifi_bringup.sh /data/kexec/enter-ubuntu.sh'"
+"$ADB" shell "su -c 'chmod 0755 /data/kexec/busybox /data/kexec/dropbear /data/kexec/dropbearkey /data/kexec/watchdog_feeder /data/kexec/boot_ubuntu_ext4 /data/kexec/kxsh.sh /data/kexec/ubuntu_phase_a_init.sh /data/kexec/wifi_bringup.sh /data/kexec/enter-ubuntu.sh'"
 "$ADB" shell "su -c '/data/kexec/busybox ln -sf /data/kexec/enter-ubuntu.sh /data/kexec/enter_ubuntu.sh'"
 "$ADB" shell "su -c '/data/kexec/busybox ln -sf /data/kexec/busybox /data/kexec/sh'"
 
-"$ROOT/scripts/install_adbd.sh"
+"$ROOT/scripts/host/install_adbd.sh"
 
 "$ADB" shell "su -c 'printf \"root::0:0:root:/data/kexec/root:/data/kexec/sh\n\" > /data/kexec/passwd'"
 "$ADB" shell "su -c 'printf \"root:x:0:\n\" > /data/kexec/group'"

@@ -16,7 +16,7 @@ set -euo pipefail
 # Patch was generated against adb rev 73fcdbf (AOSP android-12.1,
 # BUILD_ID SQ3A.220705.001.B2).
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 ADB_SRC="${ADB_SRC:-$AOSP_DIR/packages/modules/adb}"
 PATCH="${PATCH:-$ROOT/patches/adbd-lean-kexec.patch}"

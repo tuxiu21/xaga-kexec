@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 SRC="$ONEPLUS_SRC/drivers/misc/mediatek/blocktag"
 OUT="${OUT:-$BLOCKTAG_BUILD_DIR}"
