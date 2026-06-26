@@ -501,6 +501,12 @@ stock adb needs replug         host USB transport stayed stale after kexec/panic
 no wlan0 after DONE            inspect wifi_bringup.log and pstore for mbox/SCP errors
 ```
 
+When `adb.exe` is run from WSL, errors such as
+`UtilAcceptVsock: accept4 failed 110` or `UtilBindVsockAnyPort: socket failed`
+can occur intermittently on the host side. They are usually transient WSL/ADB
+transport errors; rerun the same command before treating them as a device-side
+failure.
+
 MTK reset reason is visible after returning to Android via `/proc/aed/reboot-reason`
 and `/proc/cmdline` fields such as `aee_aed.pureason` and `poffreason`; they describe
 the previous reset.
