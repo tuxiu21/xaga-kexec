@@ -48,6 +48,20 @@ aarch64-linux-gnu-gcc -static -Os -s \
 "$ADB" shell "su -c '/data/kexec/busybox ln -sf /data/kexec/enter-ubuntu.sh /data/kexec/enter_ubuntu.sh'"
 "$ADB" shell "su -c '/data/kexec/busybox ln -sf /data/kexec/busybox /data/kexec/sh'"
 
+wifi_modules="mtk-mbox mtk_rpmsg_mbox mtk_tinysys_ipi mtk-ssc
+connadp
+mcupm gpueb fhctl
+mtk-afe-external scp
+connscp
+mtk_low_battery_throttling mtk_dynamic_loading_throttling mtk_mdpm mtk_pbm
+ccci_util_lib ccci_auxadc rps_perf ccmni ccci_md_all
+conninfra connfem wmt_chrdev_wifi_connac2 mddp wlan_drv_gen4m_6895"
+"$ADB" shell "su -c 'rm -rf /data/kexec/modules; mkdir -p /data/kexec/modules'"
+for mod in $wifi_modules; do
+  "$ADB" shell "su -c 'for d in /vendor_dlkm/lib/modules /vendor/lib/modules; do [ -f \"\$d/$mod.ko\" ] && cp \"\$d/$mod.ko\" /data/kexec/modules/ && break; done'" >/dev/null 2>&1 || true
+done
+"$ADB" shell "su -c 'chmod 0644 /data/kexec/modules/*.ko 2>/dev/null || true; ls -l /data/kexec/modules | sed -n \"1,120p\"'"
+
 "$ROOT/scripts/host/install_adbd.sh"
 
 "$ADB" shell "su -c 'printf \"root::0:0:root:/data/kexec/root:/data/kexec/sh\n\" > /data/kexec/passwd'"

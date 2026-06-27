@@ -139,6 +139,8 @@ userdata_mounts()
 
 unmount_userdata()
 {
+  local attempt
+
   [ "$AUTO_UNMOUNT" = 1 ] || return 0
 
   if [ -z "$(userdata_mounts)" ]; then
@@ -146,13 +148,39 @@ unmount_userdata()
   fi
 
   echo "userdata is mounted; trying recovery/TWRP unmount path..."
-  adb_shell "setprop ctl.stop vibratorfeature-hal-service 2>/dev/null || true" || true
-  adb_shell "command -v twrp >/dev/null 2>&1 && twrp unmount /sdcard >/dev/null 2>&1 || true" || true
-  wait_recovery
-  adb_shell "command -v twrp >/dev/null 2>&1 && twrp unmount /data >/dev/null 2>&1 || true" || true
-  wait_recovery
-  adb_shell "sync; umount /sdcard 2>/dev/null || true; umount /data 2>/dev/null || true" || true
-  wait_recovery
+  for attempt in $(seq 1 5); do
+    echo "unmount attempt $attempt"
+    adb_shell "setprop ctl.stop vibratorfeature-hal-service 2>/dev/null || true" || true
+    adb_shell "command -v twrp >/dev/null 2>&1 && twrp unmount /sdcard >/dev/null 2>&1 || true" || true
+    wait_recovery
+    adb_shell "command -v twrp >/dev/null 2>&1 && twrp unmount /data >/dev/null 2>&1 || true" || true
+    wait_recovery
+    adb_shell "sync; umount /sdcard 2>/dev/null || true; umount /data 2>/dev/null || true" || true
+    wait_recovery
+
+    if [ -z "$(userdata_mounts)" ]; then
+      echo "userdata is unmounted"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "userdata is still mounted after automatic unmount attempts" >&2
+  adb_shell '
+    for p in /proc/[0-9]*; do
+      pid=${p##*/}
+      for f in "$p"/fd/*; do
+        target=$(readlink "$f" 2>/dev/null || true)
+        case "$target" in
+          /data*|/sdcard*)
+            printf "pid=%s fd=%s %s cmd=" "$pid" "${f##*/}" "$target"
+            tr "\0" " " < "$p/cmdline" 2>/dev/null || true
+            printf "\n"
+            ;;
+        esac
+      done
+    done
+  ' >&2 || true
 }
 
 sector_size="$(adb_shell "blockdev --getss $DEVICE 2>/dev/null || cat /sys/block/${DEVICE##*/}/queue/logical_block_size" | tr -d '\r\n')"

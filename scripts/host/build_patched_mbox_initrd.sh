@@ -11,6 +11,10 @@ GKI_RAMDISK="${GKI_RAMDISK:-$UNPACK_GKI_DIR/ramdisk}"
 INITRD_OUT="${INITRD_OUT:-$OUTPUT_DIR/combined_ramdisk_kexec_system_mbox.lz4}"
 VENDOR_CPIO_OUT="${VENDOR_CPIO_OUT:-$VENDOR_DIR/ramdisk_patched_mbox.cpio}"
 BLOCKTAG_KO="${BLOCKTAG_KO:-$BLOCKTAG_BUILD_DIR/blocktag.ko}"
+RAMDISK_KXSH="${RAMDISK_KXSH:-$OUTPUT_DIR/ramdisk_kxshbin}"
+INIT_KXSH="${INIT_KXSH:-$ROOT/prebuilt/init_first_stage_kxsh}"
+
+[ -s "$INIT_KXSH" ] || { echo "missing rebuilt first-stage init: $INIT_KXSH" >&2; exit 1; }
 
 rm -rf "$OUT"
 mkdir -p "$OUT/linux/soc/mediatek"
@@ -33,6 +37,10 @@ PATH="$CLANG_BIN:$PATH" make -C "$AK/common" \
 cp "$OUT/mtk-mbox.ko" "$OUT/mtk-mbox.stripped.ko"
 "$CLANG_BIN/llvm-strip" --strip-debug "$OUT/mtk-mbox.stripped.ko"
 
+aarch64-linux-gnu-gcc -static -Os -s \
+  -o "$RAMDISK_KXSH" \
+  "$ROOT/src/system_kxsh.c"
+
 work="$(mktemp -d)"
 cleanup()
 {
@@ -44,6 +52,11 @@ mkdir -p "$work/vendor_root"
 (
   cd "$work/vendor_root"
   cpio -idm < "$VENDOR_CPIO" >/dev/null 2>&1
+  for fstab in first_stage_ramdisk/fstab.mt6895 first_stage_ramdisk/fstab.emmc; do
+    [ -f "$fstab" ] || continue
+    grep -q ' /mnt ' "$fstab" || \
+      printf '/dev/block/by-name/linux /mnt ext4 noatime,nosuid,nodev wait,nofail,first_stage_mount\n' >> "$fstab"
+  done
   rm -f init
   cp "$OUT/mtk-mbox.stripped.ko" lib/modules/mtk-mbox.ko
   if [ -s "$BLOCKTAG_KO" ]; then
@@ -57,10 +70,11 @@ magiskboot compress=lz4_legacy "$work/vendor_mbox.cpio" "$work/vendor_ramdisk_mb
 (
   cd "$work"
   magiskboot decompress "$GKI_RAMDISK" gki.cpio >/dev/null
-  magiskboot cpio gki.cpio 'extract init init.orig' >/dev/null
-  cp init.orig init.patched
-  perl -0pi -e 's#/system/bin/init#/system/bin/kxsh#g' init.patched
-  magiskboot cpio gki.cpio 'add 0750 init init.patched' >/dev/null
+  cp "$INIT_KXSH" init.kxsh
+  cp "$RAMDISK_KXSH" ramdisk_kxshbin
+  magiskboot cpio gki.cpio 'add 0750 init init.kxsh' >/dev/null
+  magiskboot cpio gki.cpio 'add 0750 kxshbin ramdisk_kxshbin' >/dev/null
+  magiskboot cpio gki.cpio 'add 0750 first_stage_ramdisk/kxshbin ramdisk_kxshbin' >/dev/null
   magiskboot compress=lz4_legacy gki.cpio gki_patched.lz4 >/dev/null
   cat gki_patched.lz4 "$work/vendor_ramdisk_mbox.lz4" > "$INITRD_OUT"
 )
@@ -71,4 +85,4 @@ if [ -s "$BLOCKTAG_KO" ]; then
   echo "included blocktag: $BLOCKTAG_KO"
   modinfo "$BLOCKTAG_KO" | sed -n '1,20p'
 fi
-ls -lh "$OUT/mtk-mbox.stripped.ko" "$VENDOR_CPIO_OUT" "$INITRD_OUT"
+ls -lh "$INIT_KXSH" "$RAMDISK_KXSH" "$OUT/mtk-mbox.stripped.ko" "$VENDOR_CPIO_OUT" "$INITRD_OUT"

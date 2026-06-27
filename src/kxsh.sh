@@ -1,11 +1,12 @@
 #!/data/kexec/busybox sh
 
-BB=/data/kexec/busybox
-DATA_BASE=/data/kexec
-LOG_FILE=/data/kexec/kxsh.log
-ADBD_LOG=/data/kexec/adbd.log
-PATH=/data/kexec:/system/bin:/vendor/bin
-export PATH
+DATA_BASE="${KEXEC_BASE:-/data/kexec}"
+KEXEC_BASE="$DATA_BASE"
+BB="$DATA_BASE/busybox"
+LOG_FILE="$DATA_BASE/kxsh.log"
+ADBD_LOG="$DATA_BASE/adbd.log"
+PATH="$DATA_BASE:/system/bin:/vendor/bin"
+export PATH KEXEC_BASE
 
 log()
 {
@@ -76,7 +77,7 @@ mount_if_needed()
 
 prepare_base()
 {
-    "$BB" --install -s /data/kexec 2>/dev/null
+    "$BB" --install -s "$DATA_BASE" 2>/dev/null
     mount_if_needed /proc proc proc ""
     mount_if_needed /sys sysfs sysfs ""
     mount_if_needed /dev devtmpfs devtmpfs "mode=0755"
@@ -90,8 +91,8 @@ prepare_base()
     if [ -x "$DATA_BASE/linker64" ] && [ ! -e /system/bin/linker64 ]; then
         "$BB" mount -t tmpfs -o mode=0755 tmpfs /system/bin 2>/dev/null
     fi
-    "$BB" ln -sf /data/kexec/sh /system/bin/sh 2>/dev/null
-    "$BB" ln -sf /data/kexec/sh /bin/sh 2>/dev/null
+    "$BB" ln -sf "$DATA_BASE/sh" /system/bin/sh 2>/dev/null
+    "$BB" ln -sf "$DATA_BASE/sh" /bin/sh 2>/dev/null
     if [ -x "$DATA_BASE/linker64" ]; then
         "$BB" ln -sf "$DATA_BASE/linker64" /system/bin/linker64 2>/dev/null
     fi
@@ -100,10 +101,10 @@ prepare_base()
 prepare_accounts()
 {
     "$BB" mkdir -p /etc "$DATA_BASE/root/.ssh" "$DATA_BASE/run"
-    echo 'root::0:0:root:/data/kexec/root:/data/kexec/sh' > /etc/passwd 2>/dev/null
+    echo "root::0:0:root:$DATA_BASE/root:$DATA_BASE/sh" > /etc/passwd 2>/dev/null
     echo 'root:x:0:' > /etc/group 2>/dev/null
     echo 'root::10933:0:99999:7:::' > /etc/shadow 2>/dev/null
-    printf '/data/kexec/sh\n/bin/sh\n/system/bin/sh\n' > /etc/shells 2>/dev/null
+    printf '%s/sh\n/bin/sh\n/system/bin/sh\n' "$DATA_BASE" > /etc/shells 2>/dev/null
     "$BB" chmod 644 /etc/passwd /etc/group 2>/dev/null
     "$BB" chmod 600 /etc/shadow 2>/dev/null
 
@@ -395,32 +396,33 @@ start_dropbear()
 }
 
 : > "$LOG_FILE" 2>/dev/null
-log "entered /data/kexec/kxsh.sh"
+log "entered $DATA_BASE/kxsh.sh"
 prepare_base
 ensure_reasonable_time
 prepare_accounts
 start_watchdog_feeder
 start_panic_timer
-setup_usb_adb
-start_dropbear
-log "ready; try adb shell, or adb forward tcp:2222 tcp:22"
 
-if [ -f /data/kexec/boot_ubuntu_ext4.once ]; then
-    "$BB" rm -f /data/kexec/boot_ubuntu_ext4.once
+if [ -f "$DATA_BASE/boot_ubuntu_ext4.once" ]; then
+    "$BB" rm -f "$DATA_BASE/boot_ubuntu_ext4.once"
     "$BB" sync 2>/dev/null
-    if [ -x /data/kexec/boot_ubuntu_ext4 ]; then
-        log "boot_ubuntu_ext4 flag present; switching root"
-        exec /data/kexec/boot_ubuntu_ext4
+    if [ -x "$DATA_BASE/boot_ubuntu_ext4" ]; then
+        log "boot_ubuntu_ext4 flag present; switching root before lean adb"
+        exec "$DATA_BASE/boot_ubuntu_ext4"
     fi
     log "boot_ubuntu_ext4 flag present but binary is missing"
 fi
 
+setup_usb_adb
+start_dropbear
+log "ready; try adb shell, or adb forward tcp:2222 tcp:22"
+
 # One-shot on-boot Wi-Fi hook: if the flag exists, run the bring-up script and
-# dump to /data/kexec (shared f2fs, survives the fall-back to stock).
+# dump to the runtime directory.
 # The flag is removed first so it runs exactly once even across reboots.
-if [ -f /data/kexec/run_wifi_probe ]; then
-    "$BB" rm -f /data/kexec/run_wifi_probe
-    probe=/data/kexec/wifi_bringup.sh
+if [ -f "$DATA_BASE/run_wifi_probe" ]; then
+    "$BB" rm -f "$DATA_BASE/run_wifi_probe"
+    probe="$DATA_BASE/wifi_bringup.sh"
     if [ -f "$probe" ]; then
         log "running one-shot ${probe##*/}"
         "$BB" sh "$probe" >> "$LOG_FILE" 2>&1

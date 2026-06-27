@@ -339,8 +339,19 @@ static void kill_lean_processes(void)
 {
     int term_sent = 0, term_failed = 0;
     int kill_sent = 0, kill_failed = 0;
+    int fd;
 
     logmsg("cleaning lean userspace before Ubuntu handoff");
+    fd = open("/config/usb_gadget/g1/UDC", O_WRONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        if (write(fd, "\n", 1) == 1)
+            logmsg("unbound lean USB gadget");
+        else
+            logmsg("warning: failed to unbind lean USB gadget errno=%d", errno);
+        close(fd);
+    } else {
+        logmsg("warning: no lean USB gadget UDC node errno=%d", errno);
+    }
     kick_watchdog_once();
 
     signal_other_processes(SIGTERM, &term_sent, &term_failed);

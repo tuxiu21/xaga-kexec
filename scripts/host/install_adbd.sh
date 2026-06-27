@@ -13,6 +13,8 @@ runtime=(
   system/bin/linker64
   system/lib64/liblog.so
   system/lib64/libselinux.so
+  system/lib64/libpcre2.so
+  system/lib64/libpackagelistparser.so
   system/lib64/libbase.so
   system/lib64/libadb_protos.so
   system/lib64/libprotobuf-cpp-lite.so

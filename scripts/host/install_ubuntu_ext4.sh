@@ -26,7 +26,9 @@ else
 fi
 "$ADB" push "$OUTPUT_DIR/boot_ubuntu_ext4" /data/local/tmp/boot_ubuntu_ext4
 "$ADB" push "$ROOT/scripts/device/ubuntu_phase_a_init.sh" /data/local/tmp/ubuntu_phase_a_init.sh
+"$ADB" push "$ROOT/scripts/device/wifi_bringup.sh" /data/local/tmp/wifi_bringup.sh
 "$ADB" shell "su -c 'cp /data/local/tmp/boot_ubuntu_ext4 /data/kexec/boot_ubuntu_ext4'"
 "$ADB" shell "su -c 'cp /data/local/tmp/ubuntu_phase_a_init.sh /data/kexec/ubuntu_phase_a_init.sh'"
-"$ADB" shell "su -c 'chmod 0755 /data/kexec/boot_ubuntu_ext4 /data/kexec/ubuntu_phase_a_init.sh; sync'"
-"$ADB" shell "su -c 'ls -lh /data/kexec/ubuntu.ext4 /data/kexec/boot_ubuntu_ext4 /data/kexec/ubuntu_phase_a_init.sh'"
+"$ADB" shell "su -c 'cp /data/local/tmp/wifi_bringup.sh /data/kexec/wifi_bringup.sh'"
+"$ADB" shell "su -c 'chmod 0755 /data/kexec/boot_ubuntu_ext4 /data/kexec/ubuntu_phase_a_init.sh /data/kexec/wifi_bringup.sh; sync'"
+"$ADB" shell "su -c 'ls -lh /data/kexec/ubuntu.ext4 /data/kexec/boot_ubuntu_ext4 /data/kexec/ubuntu_phase_a_init.sh /data/kexec/wifi_bringup.sh'"

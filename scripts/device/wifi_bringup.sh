@@ -4,18 +4,26 @@
 # Requirements:
 # - patched mtk-mbox.ko in the initrd, otherwise SCP mailbox bring-up can BUG
 #   or spin on unmatched recv IRQ bits after kexec.
-# - vendor_dlkm mounted by Android first-stage init before /system/bin/kxsh.
-# - /data/kexec/busybox available.
+# - $KEXEC_BASE/modules populated by the host installer, or vendor_dlkm mounted
+#   by Android first-stage init before /system/bin/kxsh.
+# - $KEXEC_BASE/busybox available.
 #
 # Output:
-# - /data/kexec/wifi_bringup.log
-# - /data/kexec/wifi_load_progress.txt
+# - $KEXEC_BASE/wifi_bringup.log
+# - $KEXEC_BASE/wifi_load_progress.txt
+# - $KEXEC_BASE/dmesg_wifi_before.log
+# - $KEXEC_BASE/dmesg_wifi_after.log
 
-BB=/data/kexec/busybox
-export PATH=/data/kexec:/system/bin:/vendor/bin
-LOG=/data/kexec/wifi_bringup.log
-PROG=/data/kexec/wifi_load_progress.txt
-DIRS="/vendor_dlkm/lib/modules /vendor/lib/modules"
+BASE="${KEXEC_BASE:-/data/kexec}"
+BB="$BASE/busybox"
+export PATH="$BASE:/system/bin:/vendor/bin"
+LOG="$BASE/wifi_bringup.log"
+PROG="$BASE/wifi_load_progress.txt"
+DMESG_BEFORE="$BASE/dmesg_wifi_before.log"
+DMESG_AFTER="$BASE/dmesg_wifi_after.log"
+POWER_WAIT_SECS="${WIFI_POWER_WAIT_SECS:-240}"
+POLL_SECS=5
+DIRS="$BASE/modules /vendor_dlkm/lib/modules /vendor/lib/modules"
 
 MODULE_ORDER="mtk-mbox mtk_rpmsg_mbox mtk_tinysys_ipi mtk-ssc
 connadp
@@ -101,9 +109,37 @@ dump_wifi_dmesg()
     "$BB" dmesg | "$BB" grep -iE 'conn_pwr|conninfra_pwr|connsys|conn_infra|pre_cal|WIFI_RAM|download|firmware|gen4m|wmt turn|func_ctrl|chip_ver|wlan0|p2p|wlanProbe|probe success|netif|patch.*dl|MBOX Error|drop unmatched|Unknown symbol' | "$BB" tail -220
 }
 
+has_wlan_iface()
+{
+    "$BB" ls /sys/class/net/ | "$BB" grep -qE '^(wlan|p2p|ap)[0-9]*$'
+}
+
+has_probe_success()
+{
+    "$BB" dmesg | "$BB" grep -qiE 'wlanProbe: probe success|wlanProbeSuccessForLowLatency'
+}
+
+wait_for_wifi_ready()
+{
+    waited=0
+    while [ "$waited" -lt "$POWER_WAIT_SECS" ]; do
+        if has_wlan_iface || has_probe_success; then
+            echo "## wifi ready after ${waited}s"
+            return 0
+        fi
+        log_step "POST_POWER_WAIT_${waited}s"
+        "$BB" sleep "$POLL_SECS"
+        waited=$((waited + POLL_SECS))
+    done
+    echo "## wifi wait timed out after ${POWER_WAIT_SECS}s"
+    return 1
+}
+
 {
     echo "===== WIFI BRINGUP BEGIN $("$BB" date) ====="
     : > "$PROG"
+    : > "$DMESG_BEFORE"
+    : > "$DMESG_AFTER"
 
     for ko in $MODULE_ORDER; do
         load_module "$ko"
@@ -115,25 +151,36 @@ dump_wifi_dmesg()
 
     if [ -c /dev/wmtWifi ]; then
         echo "===== power on STA via /dev/wmtWifi ====="
+        "$BB" dmesg > "$DMESG_BEFORE" 2>&1
         log_step "POWER_ON"
         ( echo 1 > /dev/wmtWifi ) 2>&1
         echo "  write rc=$?"
 
         # The vendor driver can return EIO before the asynchronous pre-cal and
-        # firmware path completes. On this target wlanProbe success appears
-        # roughly 60 seconds later, so wait before checking interfaces.
-        log_step "POST_POWER_WAIT"
+        # firmware path completes. Poll for the actual netdev/probe outcome.
+        log_step "POST_POWER_WAIT_0s"
         "$BB" sync
-        "$BB" sleep 90
+        wait_for_wifi_ready
+        wifi_ready=$?
+        "$BB" dmesg > "$DMESG_AFTER" 2>&1
 
         echo "## connsys/wlan dmesg after power-on wait"
         dump_wifi_dmesg
+
+        if [ "$wifi_ready" = 0 ] || has_wlan_iface || has_probe_success; then
+            result="READY"
+        else
+            result="NO_WLAN_IFACE"
+        fi
     else
         echo "!! /dev/wmtWifi missing"
+        "$BB" dmesg > "$DMESG_AFTER" 2>&1
+        result="WMTWIFI_MISSING"
     fi
 
     dump_state
-    log_step "DONE"
+    log_step "$result"
+    echo "## result: $result"
     echo "===== WIFI BRINGUP END $("$BB" date) ====="
     "$BB" sync
 } 2>&1 | "$BB" tee "$LOG"

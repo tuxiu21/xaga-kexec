@@ -27,4 +27,4 @@ echo "== add regulator-always-on in place =="
 
 echo "== push patched.dtb -> /data/local/tmp/ =="
 "$ADB" push "$TMP_ROOT/patched.dtb" /data/local/tmp/patched.dtb
-echo "done. kexec_adb_until_new.sh passes --dtb=patched.dtb by default (DTB_DEV)."
+echo "done. kexec_adb_until_lean.sh and kexec_adb_until_ubuntu.sh use patched.dtb by default (DTB_DEV)."

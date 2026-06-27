@@ -222,7 +222,8 @@ scripts/host/install_system_dropbear.sh
     the kexec payload.
 
 scripts/host/install_ubuntu_ext4.sh
-    Pushes work/rootfs/ubuntu.ext4 and boot_ubuntu_ext4 into /data/kexec.
+    Pushes work/rootfs/ubuntu.ext4, boot_ubuntu_ext4, ubuntu_phase_a_init.sh,
+    and wifi_bringup.sh into /data/kexec.
 
 scripts/host/install_kexec_payload.sh
     Pushes the current GKI dist/Image, kexec binary, selected initrd, and
@@ -234,12 +235,14 @@ scripts/host/install_adbd.sh
 scripts/host/enable_wifi_bringup_once.sh
     Sets /data/kexec/run_wifi_probe so the next lean boot runs wifi_bringup.sh.
 
-scripts/host/kexec_adb_until_new.sh
+scripts/host/kexec_adb_until_lean.sh
     Boots and captures retries until lean ADB enumerates. Defaults to the mbox
-    initrd. Set BOOT_UBUNTU_EXT4_ONCE=1 to make the next lean boot loop-mount
-    /data/kexec/ubuntu.ext4 and switch_roots into it. The current default init
-    target is /data/kexec/ubuntu_phase_a_init.sh, which writes validation logs
-    and then panics back to stock Android.
+    initrd.
+
+scripts/host/kexec_adb_until_ubuntu.sh
+    Boots and captures retries until Ubuntu ext4 ADB enumerates. The lean stage
+    skips lean adbd, loop-mounts /data/kexec/ubuntu.ext4, switch_roots into it,
+    and waits for Ubuntu adbd at serial ubuntu012345678.
 ```
 
 Runtime tests:
@@ -256,8 +259,7 @@ scripts/device/enter_ubuntu.sh
 
 scripts/device/ubuntu_phase_a_init.sh
     Device-side Ubuntu switch-root validation init. Starts the Ubuntu-stage
-    watchdog feeder, writes validation logs, and currently panics back to stock
-    Android.
+    watchdog feeder and Ubuntu adbd, then writes validation logs.
 ```
 
 Maintenance:
@@ -350,7 +352,7 @@ Default lean ADB boot, using the mbox/Wi-Fi initrd:
 
 ```bash
 cd /home/in/work/kernels
-PANIC_AFTER=300 bash scripts/host/kexec_adb_until_new.sh
+PANIC_AFTER=300 bash scripts/host/kexec_adb_until_lean.sh
 ```
 
 Wi-Fi boot with one-shot bring-up:
@@ -359,7 +361,20 @@ Wi-Fi boot with one-shot bring-up:
 cd /home/in/work/kernels
 bash scripts/host/build_patched_mbox_initrd.sh
 PANIC_AFTER=300 bash scripts/host/enable_wifi_bringup_once.sh
-PANIC_AFTER=300 bash scripts/host/kexec_adb_until_new.sh
+PANIC_AFTER=300 bash scripts/host/kexec_adb_until_lean.sh
+```
+
+Ubuntu ext4 boot:
+
+```bash
+cd /home/in/work/kernels
+PANIC_AFTER=300 bash scripts/host/kexec_adb_until_ubuntu.sh
+```
+
+Ubuntu starts Wi-Fi bring-up by default. Disable it for a boot with:
+
+```bash
+UBUNTU_WIFI=0 PANIC_AFTER=300 bash scripts/host/kexec_adb_until_ubuntu.sh
 ```
 
 A successful lean ADB transport enumerates as:

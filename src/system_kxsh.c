@@ -10,6 +10,11 @@
 #include <sys/sysmacros.h>
 #include <unistd.h>
 
+#define LINUX_MOUNT "/mnt"
+#define LINUX_RUNTIME "/mnt/kexec"
+
+static int make_block_node_from_sysfs(const char *name);
+
 static void logmsg(const char *fmt, ...)
 {
     char buf[512];
@@ -56,34 +61,60 @@ static int mount_one(const char *src, const char *target, const char *type,
     return -1;
 }
 
-static int mount_data(void)
+static int mount_linux_runtime(void)
 {
     const char *candidates[] = {
-        "/dev/block/by-name/userdata",
-        "/dev/block/sdc86",
-        "/dev/block/mapper/userdata",
+        "/dev/block/by-name/linux",
+        "/dev/block/sdc88",
         NULL,
     };
     const char **p;
 
-    mkdir_p("/data", 0755);
+    mkdir_p(LINUX_MOUNT, 0755);
     for (p = candidates; *p; p++) {
         if (access(*p, F_OK) != 0) {
             continue;
         }
-        logmsg("trying /data from %s", *p);
-        if (mount(*p, "/data", "f2fs", MS_NOSUID | MS_NODEV | MS_NOATIME, "") == 0) {
-            logmsg("mounted /data as f2fs");
-            return 0;
-        }
-        if (mount(*p, "/data", "ext4", MS_NOSUID | MS_NODEV | MS_NOATIME, "") == 0) {
-            logmsg("mounted /data as ext4");
-            return 0;
+        logmsg("trying linux runtime from %s", *p);
+        if (mount(*p, LINUX_MOUNT, "ext4", MS_NOSUID | MS_NODEV | MS_NOATIME, "") == 0 ||
+            errno == EBUSY) {
+            if (access(LINUX_RUNTIME "/busybox", X_OK) == 0 &&
+                access(LINUX_RUNTIME "/kxsh.sh", R_OK) == 0) {
+                logmsg("mounted linux runtime at " LINUX_RUNTIME);
+                return 0;
+            }
+            logmsg("linux partition mounted, but " LINUX_RUNTIME " is incomplete");
+            return -1;
         }
     }
 
-    logmsg("failed to mount /data: errno=%d", errno);
+    logmsg("failed to mount linux runtime: errno=%d", errno);
     return -1;
+}
+
+static int first_stage_linux_runtime_ready(void)
+{
+    if (access(LINUX_RUNTIME "/busybox", X_OK) != 0 ||
+        access(LINUX_RUNTIME "/kxsh.sh", R_OK) != 0) {
+        return -1;
+    }
+
+    logmsg("using first-stage linux runtime at " LINUX_RUNTIME);
+    return 0;
+}
+
+static void wait_for_runtime_nodes(void)
+{
+    int i;
+
+    for (i = 0; i < 30; i++) {
+        make_block_node_from_sysfs("sdc88");
+        if (access("/dev/block/sdc88", F_OK) == 0 ||
+            access("/dev/block/by-name/linux", F_OK) == 0) {
+            return;
+        }
+        sleep(1);
+    }
 }
 
 static int make_block_node_from_sysfs(const char *name)
@@ -128,36 +159,17 @@ static int make_block_node_from_sysfs(const char *name)
     return 0;
 }
 
-static int wait_for_userdata_node(void)
-{
-    int i;
-
-    for (i = 0; i < 30; i++) {
-        make_block_node_from_sysfs("sdc86");
-        if (access("/dev/block/sdc86", F_OK) == 0) {
-            return 0;
-        }
-        sleep(1);
-    }
-
-    return -1;
-}
-
 int main(void)
 {
-    char *argv[] = {
-        "/data/kexec/busybox",
-        "sh",
-        "/data/kexec/kxsh.sh",
-        NULL,
-    };
-    char *envp[] = {
-        "PATH=/data/kexec:/system/bin:/vendor/bin",
-        "HOME=/data/kexec/root",
+    char *linux_argv[] = { LINUX_RUNTIME "/busybox", "sh", LINUX_RUNTIME "/kxsh.sh", NULL };
+    char *linux_envp[] = {
+        "KEXEC_BASE=" LINUX_RUNTIME,
+        "PATH=" LINUX_RUNTIME ":/system/bin:/vendor/bin",
+        "HOME=" LINUX_RUNTIME "/root",
         NULL,
     };
 
-    logmsg("entered static /system/bin/kxsh");
+    logmsg("entered static ramdisk kxsh");
 
     mount(NULL, "/", NULL, MS_REMOUNT, NULL);
     mount_one("proc", "/proc", "proc", 0, "");
@@ -168,12 +180,20 @@ int main(void)
     mount_one("tmpfs", "/tmp", "tmpfs", 0, "mode=1777");
     mount_one("configfs", "/config", "configfs", 0, "");
 
-    wait_for_userdata_node();
-    mount_data();
+    if (first_stage_linux_runtime_ready() == 0) {
+        logmsg("exec " LINUX_RUNTIME "/busybox sh " LINUX_RUNTIME "/kxsh.sh");
+        execve(linux_argv[0], linux_argv, linux_envp);
+        logmsg("exec first-stage linux runtime failed: errno=%d", errno);
+    }
 
-    logmsg("exec /data/kexec/busybox sh /data/kexec/kxsh.sh");
-    execve(argv[0], argv, envp);
-    logmsg("exec busybox failed: errno=%d", errno);
+    wait_for_runtime_nodes();
+    if (mount_linux_runtime() == 0) {
+        logmsg("exec " LINUX_RUNTIME "/busybox sh " LINUX_RUNTIME "/kxsh.sh");
+        execve(linux_argv[0], linux_argv, linux_envp);
+        logmsg("exec linux runtime failed: errno=%d", errno);
+    }
+
+    logmsg("no linux runtime available; not falling back to /data");
 
     for (;;) {
         sleep(3600);
