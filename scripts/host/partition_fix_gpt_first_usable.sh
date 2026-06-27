@@ -63,7 +63,7 @@ if [ "$sector_size" != "4096" ]; then
 fi
 
 last_lba=$(( device_bytes / sector_size - 1 ))
-out="$WORK_DIR/gpt_first_usable_fix_$(date +%Y%m%d_%H%M%S)"
+out="$DIAG_ROOT/gpt_first_usable/gpt_first_usable_fix_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$out"
 
 "$ADB" exec-out "dd if=$DEVICE bs=4096 skip=1 count=1 2>/dev/null" > "$out/primary-gpt-header.bin"
