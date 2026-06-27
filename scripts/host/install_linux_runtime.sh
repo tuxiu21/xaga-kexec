@@ -93,10 +93,6 @@ aarch64-linux-gnu-gcc -static -Os -s \
   -o "$OUTPUT_DIR/boot_ubuntu_ext4" \
   "$ROOT/src/boot_ubuntu_ext4.c"
 
-aarch64-linux-gnu-gcc -static -Os -s \
-  -o "$OUTPUT_DIR/kxshbinxxxx" \
-  "$ROOT/src/system_kxsh.c"
-
 tmp="$(mktemp -d "$TMP_ROOT/linux_runtime.XXXXXX")"
 cleanup()
 {
@@ -130,7 +126,6 @@ cp "$ROOT/prebuilt/dropbear" "$tmp/push/dropbear"
 cp "$ROOT/prebuilt/dropbearkey" "$tmp/push/dropbearkey"
 cp "$OUTPUT_DIR/watchdog_feeder" "$tmp/push/watchdog_feeder"
 cp "$OUTPUT_DIR/boot_ubuntu_ext4" "$tmp/push/boot_ubuntu_ext4"
-cp "$OUTPUT_DIR/kxshbinxxxx" "$tmp/push/kxshbinxxxx"
 cp "$ROOT/src/kxsh.sh" "$tmp/push/kxsh.sh"
 cp "$ROOT/scripts/device/ubuntu_phase_a_init.sh" "$tmp/push/ubuntu_phase_a_init.sh"
 cp "$ROOT/scripts/device/wifi_bringup.sh" "$tmp/push/wifi_bringup.sh"
@@ -138,7 +133,7 @@ cp "$ROOT/scripts/device/enter_ubuntu.sh" "$tmp/push/enter-ubuntu.sh"
 
 chmod 0755 "$tmp/push"/adbd "$tmp/push"/busybox "$tmp/push"/dropbear \
   "$tmp/push"/dropbearkey "$tmp/push"/watchdog_feeder \
-  "$tmp/push"/boot_ubuntu_ext4 "$tmp/push"/kxshbinxxxx "$tmp/push"/*.sh "$tmp/push/linker64"
+  "$tmp/push"/boot_ubuntu_ext4 "$tmp/push"/*.sh "$tmp/push/linker64"
 chmod 0644 "$tmp/push"/adblib/*.so
 
 wifi_modules="mtk-mbox mtk_rpmsg_mbox mtk_tinysys_ipi mtk-ssc connadp mcupm gpueb fhctl mtk-afe-external scp connscp mtk_low_battery_throttling mtk_dynamic_loading_throttling mtk_mdpm mtk_pbm ccci_util_lib ccci_auxadc rps_perf ccmni ccci_md_all conninfra connfem wmt_chrdev_wifi_connac2 mddp wlan_drv_gen4m_6895"
@@ -169,7 +164,7 @@ adb_root_shell "
   chmod 700 \"$LINUX_RUNTIME/root\" \"$LINUX_RUNTIME/root/.ssh\"
   chmod 600 \"$LINUX_RUNTIME/root/.ssh/authorized_keys\" \"$LINUX_RUNTIME/shadow\" 2>/dev/null || true
   chmod 644 \"$LINUX_RUNTIME/passwd\" \"$LINUX_RUNTIME/group\"
-  chmod 0755 \"$LINUX_RUNTIME\" \"$LINUX_RUNTIME\"/busybox \"$LINUX_RUNTIME\"/dropbear \"$LINUX_RUNTIME\"/dropbearkey \"$LINUX_RUNTIME\"/watchdog_feeder \"$LINUX_RUNTIME\"/boot_ubuntu_ext4 \"$LINUX_RUNTIME\"/kxshbinxxxx \"$LINUX_RUNTIME\"/kxsh.sh \"$LINUX_RUNTIME\"/ubuntu_phase_a_init.sh \"$LINUX_RUNTIME\"/wifi_bringup.sh \"$LINUX_RUNTIME\"/enter-ubuntu.sh \"$LINUX_RUNTIME\"/linker64 \"$LINUX_RUNTIME\"/adbd
+  chmod 0755 \"$LINUX_RUNTIME\" \"$LINUX_RUNTIME\"/busybox \"$LINUX_RUNTIME\"/dropbear \"$LINUX_RUNTIME\"/dropbearkey \"$LINUX_RUNTIME\"/watchdog_feeder \"$LINUX_RUNTIME\"/boot_ubuntu_ext4 \"$LINUX_RUNTIME\"/kxsh.sh \"$LINUX_RUNTIME\"/ubuntu_phase_a_init.sh \"$LINUX_RUNTIME\"/wifi_bringup.sh \"$LINUX_RUNTIME\"/enter-ubuntu.sh \"$LINUX_RUNTIME\"/linker64 \"$LINUX_RUNTIME\"/adbd
   chmod 0644 \"$LINUX_RUNTIME\"/adblib/*.so
   rm -rf \"$LINUX_RUNTIME/modules\"
   mkdir -p \"$LINUX_RUNTIME/modules\"

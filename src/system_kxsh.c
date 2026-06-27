@@ -92,17 +92,6 @@ static int mount_linux_runtime(void)
     return -1;
 }
 
-static int first_stage_linux_runtime_ready(void)
-{
-    if (access(LINUX_RUNTIME "/busybox", X_OK) != 0 ||
-        access(LINUX_RUNTIME "/kxsh.sh", R_OK) != 0) {
-        return -1;
-    }
-
-    logmsg("using first-stage linux runtime at " LINUX_RUNTIME);
-    return 0;
-}
-
 static void wait_for_runtime_nodes(void)
 {
     int i;
@@ -180,12 +169,6 @@ int main(void)
     mount_one("tmpfs", "/tmp", "tmpfs", 0, "mode=1777");
     mount_one("configfs", "/config", "configfs", 0, "");
 
-    if (first_stage_linux_runtime_ready() == 0) {
-        logmsg("exec " LINUX_RUNTIME "/busybox sh " LINUX_RUNTIME "/kxsh.sh");
-        execve(linux_argv[0], linux_argv, linux_envp);
-        logmsg("exec first-stage linux runtime failed: errno=%d", errno);
-    }
-
     wait_for_runtime_nodes();
     if (mount_linux_runtime() == 0) {
         logmsg("exec " LINUX_RUNTIME "/busybox sh " LINUX_RUNTIME "/kxsh.sh");
@@ -193,7 +176,7 @@ int main(void)
         logmsg("exec linux runtime failed: errno=%d", errno);
     }
 
-    logmsg("no linux runtime available; not falling back to /data");
+    logmsg("no linux runtime available; halting in ramdisk bootstrap");
 
     for (;;) {
         sleep(3600);

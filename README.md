@@ -1,51 +1,53 @@
 # Kexec Lean Linux on mt6895
 
-This project boots a lean Linux userspace on xaga/mt6895 hardware via `kexec`.
-Android first-stage init runs far enough to hand off to `/system/bin/init`; the
-combined ramdisk patches that handoff to `/system/bin/kxsh`, which enters the
-`/data/kexec` runtime.
+This project boots a lean Linux userspace on xaga/mt6895 hardware through
+`kexec`. The current path does not modify `/system` and does not use `/data` for
+the lean runtime.
 
-The primary management path is **ADB over USB**. Dropbear also runs in the lean
-system and can now be reached over Wi-Fi once `wlan0` is up.
+The active handoff is:
 
-## Safety Notes
+```text
+GKI ramdisk /init
+  -> exec /kxshbin before Android first-stage mount
+      -> mount linux partition at /mnt
+      -> exec /mnt/kexec/busybox sh /mnt/kexec/kxsh.sh
+          -> start lean adbd, Dropbear, watchdog, optional Wi-Fi bring-up
+```
 
-- Do **not** run `fastboot reboot recovery` on xaga. It can leave the BCB set to
-  `boot-recovery` and force repeated recovery boots.
-- Keep `/data/kexec/panic_after` nonzero while debugging. The lean runtime uses
-  it to panic back to stock Android if the system hangs.
-- Do not repeatedly kexec after a failed boot without collecting adb, pstore, or
-  bootloader state. Ramoops is small and useful evidence is easy to overwrite.
+The linux partition is expected at `/dev/block/by-name/linux`; `/dev/block/sdc88`
+is also recognized because the by-name links may not exist yet this early. In
+the lean environment it is mounted at `/mnt`, and the runtime lives under
+`/mnt/kexec`.
 
 ## Current State
 
-- Lean ADB enumeration works. The lean serial is `0123456789abcdef`.
-- `patched.dtb` carries the `regulator-always-on` fix that avoids the old ~31.7s
-  regulator cleanup death.
-- Wi-Fi bring-up works with the patched mbox initrd. `wlanProbe success` creates
-  `wlan0`, `wlan1`, `p2p0`, and `ap0`; SSID scan has been verified with `iw`.
-- Wi-Fi is slow to appear. The WMT write can return `Input/output error` and log
-  a 10s timeout, then firmware/pre-cal continues asynchronously and succeeds
-  around 80-100s later.
-- Dropbear over Wi-Fi works with key auth. `/etc/shells` must list
-  `/data/kexec/sh`; `src/kxsh.sh` now creates that file.
-- Ubuntu chroot is available at `/data/kexec/ubuntu-rootfs` and entered with
-  `/data/kexec/enter-ubuntu.sh` once installed.
-- Docker can start inside the Ubuntu rootfs with cgroup v2, `vfs` storage, and
-  bridge/iptables disabled. The offline smoke test has run successfully with
-  `docker-run-ok`.
-- The current Docker test kernel enables the container namespace/cgroup options
-  in `common/arch/arm64/configs/docker_gki.fragment` and keeps `CONFIG_KSU`
-  disabled. KernelSU exec hooks crashed this guest kernel during Docker startup.
-- The stock `blocktag.ko` is not ABI-safe after enabling options such as
-  `CONFIG_SYSVIPC`; rebuild it against the current GKI output with
-  `scripts/host/build_blocktag_ko.sh` and include it in the mbox initrd.
+- Lean ADB works. The lean serial is `0123456789abcdef`.
+- The current GKI ramdisk embeds `/kxshbin`; no `/mnt/kxshbinxxxx` external
+  handoff binary is required.
+- `prebuilt/init_first_stage_kxsh` is a rebuilt AOSP first-stage init that
+  checks `/kxshbin` before `DoFirstStageMount()`.
+- `kxshbin` is a small static ramdisk bootstrap built from `src/system_kxsh.c`
+  by the initrd build scripts.
+- `scripts/host/install_linux_runtime.sh` installs the runtime to the linux
+  partition without using `/data/local/tmp` as a staging area.
+- `patched.dtb` carries the regulator always-on fix used by the kexec tests.
+- Wi-Fi bring-up works with the mbox initrd when the module set is installed in
+  `/mnt/kexec/modules`.
+
+## Safety Notes
+
+- Do not run `fastboot reboot recovery` on xaga; it can leave the BCB set to
+  `boot-recovery`.
+- Keep `panic_after` nonzero while debugging. The lean runtime panics back to
+  stock Android if it hangs.
+- Do not repeatedly kexec after a failed boot without collecting pstore or
+  lean logs. Ramoops is small and useful evidence is easy to overwrite.
 
 ## Requirements
 
 Host tools:
 
-```bash
+```text
 adb.exe
 magiskboot
 aarch64-linux-gnu-gcc
@@ -58,228 +60,104 @@ Device assumptions:
 
 ```text
 root access is available through su
-/system can be remounted read-write for installing /system/bin/kxsh
-/data is usable from the lean runtime
+linux partition exists at /dev/block/by-name/linux or /dev/block/sdc88
 active slot is currently assumed to be _a by some scripts
 local/boot-5.10.img exists, or GKI_BOOT_IMAGE points at the downloaded GKI boot image
 ```
 
 ## Source Trees
 
-`sources/` is intentionally gitignored. A fresh machine needs these trees before
-the build and install scripts are fully reproducible:
+`sources/` is intentionally gitignored. A fresh machine needs these trees for
+full rebuilds:
 
 ```text
 sources/android-kernel
     Android 12 5.10 GKI build tree. Used by build_gki_logged.sh and as the
-    Kbuild output base for external modules. The current local manifest is from
-    https://android.googlesource.com/kernel/manifest with common-android12-5.10
-    projects and android12-5.10 kernel/common. Verified anchors:
-    manifest d49bde8, common 450a2c1e4bef, build dbfab7e0.
+    Kbuild output base for external modules.
 
 sources/Xiaomi_Kernel_OpenSource
-    Xiaomi xaga vendor kernel source. Current branch: xaga-s-oss. Used for
-    libfdt helpers and rebuilding the patched mtk-mbox.ko. Verified anchor:
-    56ec519f6.
+    Xiaomi xaga vendor kernel source. Used for patched mtk-mbox.ko.
 
 sources/android_kernel_5.10_oneplus_mt6895
-    OnePlus MTK 5.10 vendor kernel source. Current branch:
-    oneplus/mt6895_v_15.0.0_ace_race, Makefile SUBLEVEL=236. Used only for
-    rebuilding blocktag.ko against the current GKI output. Verified anchor:
-    05dd76e8b.
+    OnePlus MTK 5.10 vendor kernel source. Used for replacement blocktag.ko.
 
 sources/kexec-tools-2.0.28
     kexec-tools source/build output. install_kexec_payload.sh expects
     build/sbin/kexec here.
 
 sources/android-12.1
-    AOSP android-12.1.0_r21 platform checkout. Only needed when rebuilding the
-    patched lean adbd; otherwise prebuilt/adbd is enough. Verified anchors:
-    platform manifest eafeb3b, packages/modules/adb 73fcdbf.
-
-sources/KernelSU
-    Historical/experimental source. The current Docker guest kernel keeps
-    CONFIG_KSU disabled because KernelSU exec hooks crashed during Docker tests.
-
-sources/android_bootable_recovery, sources/clang-prebuilt
-    Historical/support checkouts. They are not in the current main boot path.
+    AOSP Android 12.1 checkout. Needed to rebuild prebuilt/init_first_stage_kxsh
+    and prebuilt/adbd.
 ```
 
-Generated and extracted local state lives under `work/`, which is also
-gitignored:
+Generated state lives under `work/`, which is also gitignored:
 
 ```text
 work/logs/                 captured build, kexec, and recovery logs
-work/output/               generated initrds, helper binaries, module builds
+work/output/               generated initrds and helper binaries
 work/vendor/               extracted and patched vendor ramdisk payloads
 work/unpack_gki/ramdisk    GKI ramdisk input
-work/tmp/                  temporary build directories, including blocktag_build
+work/tmp/                  temporary build directories
 ```
 
-`local/` is for operator-provided inputs that are needed to reproduce the build
-but should not be committed:
+Operator-provided inputs live under `local/`:
 
 ```text
 local/boot-5.10.img        Google-downloaded GKI boot image used to extract the
                            base GKI ramdisk
 ```
 
-`old/` is only a local archive. Scripts do not depend on it.
+## Reproducible Patches And Prebuilts
 
-Suggested bootstrap shape:
+The AOSP init patch is stored in:
+
+```text
+patches/aosp-init-kxsh-early-handoff.patch
+```
+
+It applies to `sources/android-12.1` and inserts this early handoff before
+`DoFirstStageMount()`:
+
+```cpp
+if (access("/kxshbin", X_OK) == 0) {
+    const char* path = "/kxshbin";
+    const char* args[] = {path, "selinux_setup", nullptr};
+    execv(path, const_cast<char**>(args));
+    PLOG(ERROR) << "execv(\"" << path << "\") failed";
+}
+```
+
+Prebuilt runtime-critical binaries:
+
+```text
+prebuilt/init_first_stage_kxsh
+    Rebuilt static AOSP first-stage init with the /kxshbin handoff.
+
+prebuilt/adbd
+    Lean USB-only adbd.
+```
+
+Rebuild `prebuilt/init_first_stage_kxsh` after changing the AOSP init patch:
 
 ```bash
-mkdir -p /home/in/work/kernels/sources
-
-cd /home/in/work/kernels/sources
-mkdir android-kernel && cd android-kernel
-repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10
-repo sync -c -j"$(nproc)"
-
-cd /home/in/work/kernels/sources
-git clone -b xaga-s-oss https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
-git clone -b oneplus/mt6895_v_15.0.0_ace_race \
-  https://github.com/OnePlusOSS/android_kernel_5.10_oneplus_mt6895.git
+cd /home/in/work/kernels/sources/android-12.1
+patch -p1 < ../../patches/aosp-init-kxsh-early-handoff.patch
+source build/envsetup.sh
+lunch aosp_arm64-eng
+m -j4 init_first_stage
+cp out/target/product/generic_arm64/ramdisk/init ../../prebuilt/init_first_stage_kxsh
 ```
 
-For adbd rebuilds:
+Build the ramdisk bootstrap after changing `src/system_kxsh.c`:
 
 ```bash
-cd /home/in/work/kernels/sources
-mkdir android-12.1 && cd android-12.1
-repo init -u https://android.googlesource.com/platform/manifest -b android-12.1.0_r21
-repo sync -c -j"$(nproc)"
+cd /home/in/work/kernels
+aarch64-linux-gnu-gcc -static -Os -s -o work/output/ramdisk_kxshbin src/system_kxsh.c
 ```
-
-Most scripts allow path overrides:
-
-```text
-AK=/path/to/android-kernel
-XIAOMI=/path/to/Xiaomi_Kernel_OpenSource
-ONEPLUS_SRC=/path/to/android_kernel_5.10_oneplus_mt6895
-KEXEC_BIN=/path/to/kexec
-KERNEL_IMAGE=/path/to/Image
-```
-
-## Configuration
-
-Scripts source `scripts/lib/env.sh`. Copy `config/env.example` to `config/env`
-only when local paths differ from the defaults:
-
-```bash
-cp config/env.example config/env
-```
-
-The default layout is:
-
-```text
-sources/    external source trees
-work/       generated local state
-```
-
-## Active Scripts
-
-Build:
-
-```text
-scripts/host/build_gki_logged.sh
-    Builds the Android GKI kernel and writes full logs under work/logs.
-
-scripts/host/build_gki_base_initrd.sh
-    Extracts the GKI ramdisk from GKI_BOOT_IMAGE, defaulting to
-    local/boot-5.10.img, into work/unpack_gki/ramdisk.
-
-scripts/host/build_blocktag_ko.sh
-    Builds replacement blocktag.ko into work/tmp/blocktag_build.
-
-scripts/host/build_vendor_base_initrd.sh
-    Pulls vendor_boot_a from the device and creates work/vendor/ramdisk_patched.cpio.
-
-scripts/host/build_system_initrd.sh
-    Builds work/output/combined_ramdisk_kexec_system.lz4 for normal lean ADB/Dropbear.
-
-scripts/host/build_patched_mbox_initrd.sh
-    Rebuilds patched mtk-mbox.ko, replaces it in the vendor ramdisk, and builds
-    work/output/combined_ramdisk_kexec_system_mbox.lz4 for Wi-Fi bring-up. If
-    work/tmp/blocktag_build/blocktag.ko exists, it is included too.
-
-scripts/host/build_ubuntu_ext4.sh
-    Converts ubuntu-rootfs.tar.gz into work/rootfs/ubuntu.ext4. Defaults to a
-    16G sparse ext4 image and uses fakeroot + mkfs.ext4 -d when available, so
-    host sudo is not required.
-
-scripts/host/build_always_on_dtb.sh
-    Pulls the live device DTB, marks required regulators always-on, and pushes
-    patched.dtb to /data/local/tmp.
-```
-
-Install and boot:
-
-```text
-scripts/host/install_system_dropbear.sh
-    Installs /system/bin/kxsh, /data/kexec runtime files, lean adbd, Dropbear,
-    boot_ubuntu_ext4, wifi_bringup.sh, and enter-ubuntu.sh. Also installs
-    the kexec payload.
-
-scripts/host/install_ubuntu_ext4.sh
-    Pushes work/rootfs/ubuntu.ext4, boot_ubuntu_ext4, ubuntu_phase_a_init.sh,
-    and wifi_bringup.sh into /data/kexec.
-
-scripts/host/install_kexec_payload.sh
-    Pushes the current GKI dist/Image, kexec binary, selected initrd, and
-    patched.dtb. Set KERNEL_IMAGE=... to override.
-
-scripts/host/install_adbd.sh
-    Installs prebuilt/adbd plus runtime linker/libs.
-
-scripts/host/enable_wifi_bringup_once.sh
-    Sets /data/kexec/run_wifi_probe so the next lean boot runs wifi_bringup.sh.
-
-scripts/host/kexec_adb_until_lean.sh
-    Boots and captures retries until lean ADB enumerates. Defaults to the mbox
-    initrd.
-
-scripts/host/kexec_adb_until_ubuntu.sh
-    Boots and captures retries until Ubuntu ext4 ADB enumerates. The lean stage
-    skips lean adbd, loop-mounts /data/kexec/ubuntu.ext4, switch_roots into it,
-    and waits for Ubuntu adbd at serial ubuntu012345678.
-```
-
-Runtime tests:
-
-```text
-scripts/host/ubuntu_docker_smoke.sh
-    Starts Docker inside the Lean Ubuntu rootfs and runs an offline container.
-
-scripts/device/wifi_bringup.sh
-    Device-side Wi-Fi module/probe script.
-
-scripts/device/enter_ubuntu.sh
-    Device-side Ubuntu chroot entry script.
-
-scripts/device/ubuntu_phase_a_init.sh
-    Device-side Ubuntu switch-root validation init. Starts the Ubuntu-stage
-    watchdog feeder and Ubuntu adbd, then writes validation logs.
-```
-
-Maintenance:
-
-```text
-scripts/host/check_sources.sh
-    Prints local source-tree and key build-output status.
-
-scripts/host/apply_adbd_patch.sh
-    Applies the lean adbd patch to the AOSP adb source tree.
-
-scripts/host/force_stock_adb_recovery.sh
-    Recovery-side helper to restore stock Android ADB access.
-```
-
-Historical probes and one-off debug scripts live under `old/scripts-20260613/`.
 
 ## Build
 
-Build the base vendor ramdisk when `vendor_boot_a` changes:
+Extract the GKI and vendor ramdisks when inputs change:
 
 ```bash
 cd /home/in/work/kernels
@@ -293,17 +171,20 @@ Build the normal lean initrd:
 bash scripts/host/build_system_initrd.sh
 ```
 
-Build the Wi-Fi-capable initrd:
+Build the mbox/Wi-Fi-capable initrd:
 
 ```bash
 bash scripts/host/build_patched_mbox_initrd.sh
 ```
 
-`build_patched_mbox_initrd.sh` is the Wi-Fi-specialized equivalent of
-`build_system_initrd.sh`: it repeats the GKI `/system/bin/init` ->
-`/system/bin/kxsh` patch and additionally replaces `mtk-mbox.ko`.
+Both initrd builders:
 
-Build the Docker test kernel and replacement `blocktag.ko`:
+- replace GKI `/init` with `prebuilt/init_first_stage_kxsh`;
+- build `src/system_kxsh.c` into `work/output/ramdisk_kxshbin` and add it as
+  both `/kxshbin` and `/first_stage_ramdisk/kxshbin`;
+- add a first-stage fstab entry for the linux partition at `/mnt`.
+
+Build the GKI kernel and optional replacement blocktag:
 
 ```bash
 bash scripts/host/build_gki_logged.sh
@@ -311,85 +192,87 @@ bash scripts/host/build_blocktag_ko.sh
 bash scripts/host/build_patched_mbox_initrd.sh
 ```
 
-The kernel build log is written under `work/logs/gki_build_*`. Use `TAIL_LINES=120`
-or `FOLLOW=1` when you need more output without loading the full build log.
-
 ## Install
 
-The lean `adbd` is frozen into `prebuilt/adbd` (the AOSP recovery variant with
-the `LEAN_KEXEC_ADBD` patch). Apply the patch after a fresh AOSP checkout or
-repo sync:
+Install the linux partition runtime:
 
 ```bash
 cd /home/in/work/kernels
-bash scripts/host/apply_adbd_patch.sh
+ADB=adb.exe bash scripts/host/install_linux_runtime.sh
 ```
 
-Rebuild only when the adbd source changes:
+This installs runtime files under `/mnt/linux_kexec/kexec` while stock Android
+is running. At lean boot the same partition is mounted at `/mnt`, so those files
+are visible as `/mnt/kexec`.
+
+Install the kexec payload:
 
 ```bash
-cd /home/in/work/kernels/sources/android-12.1
-source build/envsetup.sh
-lunch aosp_arm64-eng
-m out/soong/.intermediates/packages/modules/adb/adbd/android_recovery_arm64_armv8-a/adbd
-cp out/soong/.intermediates/packages/modules/adb/adbd/android_recovery_arm64_armv8-a/adbd \
-   /home/in/work/kernels/prebuilt/adbd
+ADB=adb.exe bash scripts/host/install_kexec_payload.sh
 ```
 
-Install the runtime payload:
+This pushes the kernel image, `kexec`, the selected combined ramdisk, and
+`patched.dtb` to `/data/local/tmp`. This use of `/data/local/tmp` is only the
+stock Android kexec launcher staging area; the lean runtime itself is not stored
+on `/data`.
 
-```bash
-cd /home/in/work/kernels
-bash scripts/host/install_system_dropbear.sh
-```
+## Boot And Test
 
-That script also runs `scripts/host/install_kexec_payload.sh` and
-`scripts/host/install_adbd.sh`.
-
-## Boot
-
-Default lean ADB boot, using the mbox/Wi-Fi initrd:
+Lean ADB boot, using the mbox initrd by default:
 
 ```bash
 cd /home/in/work/kernels
-PANIC_AFTER=300 bash scripts/host/kexec_adb_until_lean.sh
+ADB=adb.exe PANIC_AFTER=60 bash scripts/host/kexec_adb_until_lean.sh \
+  work/output/combined_ramdisk_kexec_system_mbox.lz4 4
 ```
 
-Wi-Fi boot with one-shot bring-up:
+Success marker:
 
-```bash
-cd /home/in/work/kernels
-bash scripts/host/build_patched_mbox_initrd.sh
-PANIC_AFTER=300 bash scripts/host/enable_wifi_bringup_once.sh
-PANIC_AFTER=300 bash scripts/host/kexec_adb_until_lean.sh
+```text
+*** LEAN ADB IS UP (serial 0123456789abcdef) ***
 ```
 
-Ubuntu ext4 boot:
-
-```bash
-cd /home/in/work/kernels
-PANIC_AFTER=300 bash scripts/host/kexec_adb_until_ubuntu.sh
-```
-
-Ubuntu starts Wi-Fi bring-up by default. Disable it for a boot with:
-
-```bash
-UBUNTU_WIFI=0 PANIC_AFTER=300 bash scripts/host/kexec_adb_until_ubuntu.sh
-```
-
-A successful lean ADB transport enumerates as:
+Open a lean shell:
 
 ```bash
 adb.exe -s 0123456789abcdef shell
 ```
 
+Early-death retry policy:
+
+- retry only when the last valid pstore kernel log line contains
+  `mtk_scpsys_mt6895`;
+- stop immediately for any other pre-kxsh failure.
+
+## Runtime Logs
+
+Lean logs are on the linux partition:
+
+```text
+/mnt/kexec/kxsh.log
+/mnt/kexec/adbd.log
+/mnt/kexec/wifi_bringup.log
+/mnt/kexec/dropbear.log
+```
+
+Useful markers:
+
+```text
+kexec-system-init: entered static ramdisk kxsh
+kexec-system-init: mounted linux runtime at /mnt/kexec
+kexec-system-init: entered /mnt/kexec/kxsh.sh
+kexec-system-init: adbd published FunctionFS endpoints
+kexec-system-init: binding adb gadget to 11201000.usb0
+kexec-system-init: starting dropbear on 0.0.0.0:22
+```
+
 ## Wi-Fi
 
-Check progress:
+Check progress from lean:
 
 ```sh
-cat /data/kexec/wifi_load_progress.txt
-cat /data/kexec/wifi_bringup.log
+cat /mnt/kexec/wifi_load_progress.txt
+cat /mnt/kexec/wifi_bringup.log
 ls /sys/class/net
 ```
 
@@ -403,138 +286,40 @@ p2p0
 ap0
 ```
 
-Enter Ubuntu and scan:
+Busybox DHCP is available from the lean runtime:
 
 ```sh
-/data/kexec/enter-ubuntu.sh
-ip link set wlan0 up
-iw dev wlan0 scan | grep SSID
+/mnt/kexec/udhcpc -i wlan0
 ```
 
-Connect with WPA/WPA2:
+## Legacy Paths
 
-```sh
-cat > /tmp/wpa.conf <<'EOF'
-network={
-    ssid="YOUR_SSID"
-    psk="YOUR_PASSWORD"
-}
-EOF
-
-wpa_supplicant -B -i wlan0 -c /tmp/wpa.conf
-dhclient wlan0
-ip addr show wlan0
-```
-
-Busybox DHCP is also available from the lean runtime:
-
-```sh
-/data/kexec/udhcpc -i wlan0
-```
-
-## Docker
-
-Run the current offline Docker smoke test after lean ADB is up:
-
-```bash
-cd /home/in/work/kernels
-bash scripts/host/ubuntu_docker_smoke.sh
-```
-
-Expected marker:
+These scripts still describe or use the older `/system/bin/kxsh` and
+`/data/kexec` flow and are not part of the current default boot path:
 
 ```text
-docker-run-ok
+scripts/host/install_system_dropbear.sh
+scripts/host/install_adbd.sh
+scripts/host/install_ubuntu_ext4.sh
+scripts/host/enable_wifi_bringup_once.sh
+scripts/host/kexec_adb_until_ubuntu.sh
+scripts/host/ubuntu_docker_smoke.sh
+scripts/device/ubuntu_phase_a_init.sh
+scripts/device/enter_ubuntu.sh
 ```
 
-Current limitations:
-
-```text
-overlay2 on /data/f2fs still fails with EINVAL, so the smoke test uses vfs
-Docker-managed bridge/NAT is disabled with --iptables=false --bridge=none
-networked containers have not been validated yet
-CONFIG_KSU is disabled in the guest kernel because its exec hook crashed Docker
-```
-
-## SSH
-
-Dropbear reads root keys from:
-
-```text
-/data/kexec/root/.ssh/authorized_keys
-```
-
-Permissions must be strict:
-
-```sh
-chmod 700 /data/kexec/root /data/kexec/root/.ssh
-chmod 600 /data/kexec/root/.ssh/authorized_keys
-```
-
-If Dropbear logs `User 'root' has invalid shell`, make sure `/etc/shells`
-contains `/data/kexec/sh`. Current `src/kxsh.sh` creates this automatically.
-
-Useful checks:
-
-```sh
-ps | grep dropbear
-cat /data/kexec/dropbear.log
-cat /etc/passwd
-cat /etc/shells
-```
-
-## Debug Logs
-
-Persistent lean logs:
-
-```text
-/data/kexec/kxsh.log
-/data/kexec/adbd.log
-/data/kexec/wifi_bringup.log
-/data/kexec/dropbear.log
-```
-
-Useful `kxsh.log` markers:
-
-```text
-kexec-system-init: entered /data/kexec/kxsh.sh
-kexec-system-init: setup_usb_adb: begin
-kexec-system-init: adbd published FunctionFS endpoints
-kexec-system-init: binding adb gadget to 11201000.usb0
-kexec-system-init: starting dropbear on 0.0.0.0:22
-kexec-system-init: running one-shot wifi_bringup.sh
-kexec-system-init: panic cleanup: begin
-```
-
-Failure interpretation:
-
-```text
-no /data/kexec/kxsh.log        did not reach kxsh; inspect pstore
-only ep0 in /dev/usb-ffs/adb   adbd did not write FunctionFS descriptors
-adb shows unauthorized         wrong adbd was installed or auth was not disabled
-stock adb needs replug         host USB transport stayed stale after kexec/panic
-no wlan0 after DONE            inspect wifi_bringup.log and pstore for mbox/SCP errors
-```
-
-When `adb.exe` is run from WSL, errors such as
-`UtilAcceptVsock: accept4 failed 110` or `UtilBindVsockAnyPort: socket failed`
-can occur intermittently on the host side. They are usually transient WSL/ADB
-transport errors; rerun the same command before treating them as a device-side
-failure.
-
-MTK reset reason is visible after returning to Android via `/proc/aed/reboot-reason`
-and `/proc/cmdline` fields such as `aee_aed.pureason` and `poffreason`; they describe
-the previous reset.
+Keep them as migration references until the Ubuntu/rootfs path is moved to
+`/mnt/kexec`.
 
 ## Layout
 
 ```text
-src/                        lean init shim, watchdog feeder, and switch-root helpers
+src/                        static bootstrap, lean shell, watchdog, switch-root helpers
 scripts/host/               host-side build/install/boot/test helpers
-scripts/device/             device-side scripts pushed into /data/kexec
+scripts/device/             device-side scripts installed into /mnt/kexec
 scripts/lib/                shared host-side shell configuration
-patches/                    source patches kept outside repo-managed trees
-prebuilt/                   busybox, adbd, dropbear, dropbearkey
+patches/                    source patches kept outside repo-managed source trees
+prebuilt/                   init_first_stage_kxsh, adbd, busybox, Dropbear
 sources/                    AOSP/kernel/tool source trees
 work/                       generated local state: logs, output, vendor, temp
 old/                        archived boot images, old probes, experiments
@@ -543,11 +328,10 @@ old/                        archived boot images, old probes, experiments
 ## Remaining Work
 
 ```text
+free unused ramdisk files after /kxshbin mounts /mnt/kexec
+migrate Ubuntu/rootfs scripts from /data/kexec to /mnt/kexec
 make kexec reach kxsh more consistently
-persist the Wi-Fi connection workflow into a script
+persist Wi-Fi connection workflow into a script
 validate Docker bridge/NAT and networked containers
-try Docker overlay2 on an ext4 data-root or switch-root Ubuntu setup
-validate thermal throttling under sustained CPU load
-auto-kexec on Android boot with a debug-disable flag
 make slot handling automatic instead of assuming vendor_boot_a
 ```

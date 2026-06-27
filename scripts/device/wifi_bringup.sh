@@ -1,11 +1,10 @@
-#!/data/kexec/busybox sh
+#!/mnt/kexec/busybox sh
 # Minimal Wi-Fi bring-up for the lean kexec environment on mt6895/xaga.
 #
 # Requirements:
 # - patched mtk-mbox.ko in the initrd, otherwise SCP mailbox bring-up can BUG
 #   or spin on unmatched recv IRQ bits after kexec.
-# - $KEXEC_BASE/modules populated by the host installer, or vendor_dlkm mounted
-#   by Android first-stage init before /system/bin/kxsh.
+# - $KEXEC_BASE/modules populated by the host installer.
 # - $KEXEC_BASE/busybox available.
 #
 # Output:
@@ -14,7 +13,7 @@
 # - $KEXEC_BASE/dmesg_wifi_before.log
 # - $KEXEC_BASE/dmesg_wifi_after.log
 
-BASE="${KEXEC_BASE:-/data/kexec}"
+BASE="${KEXEC_BASE:-/mnt/kexec}"
 BB="$BASE/busybox"
 export PATH="$BASE:/system/bin:/vendor/bin"
 LOG="$BASE/wifi_bringup.log"

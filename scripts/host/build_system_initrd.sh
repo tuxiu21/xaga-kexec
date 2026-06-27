@@ -7,7 +7,7 @@ GKI_RAMDISK="$UNPACK_GKI_DIR/ramdisk"
 VENDOR_CPIO="$VENDOR_DIR/ramdisk_patched.cpio"
 VENDOR_LZ4="$VENDOR_DIR/vendor_ramdisk_system.lz4"
 OUT="$OUTPUT_DIR/combined_ramdisk_kexec_system.lz4"
-RAMDISK_KXSH="$OUTPUT_DIR/ramdisk_kxshbin"
+RAMDISK_KXSH="${RAMDISK_KXSH:-$OUTPUT_DIR/ramdisk_kxshbin}"
 INIT_KXSH="${INIT_KXSH:-$ROOT/prebuilt/init_first_stage_kxsh}"
 WORK="$(mktemp -d "$TMP_ROOT/kexec_system_initrd.XXXXXX")"
 

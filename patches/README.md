@@ -21,3 +21,13 @@ cp out/target/product/generic_arm64/ramdisk/init ../../prebuilt/init_first_stage
 
 The initrd build scripts use `prebuilt/init_first_stage_kxsh` by default. Override
 with `INIT_KXSH=/path/to/init` when testing another build.
+
+The ramdisk bootstrap is built from `src/system_kxsh.c` by the initrd build
+scripts:
+
+```sh
+cd /home/in/work/kernels
+aarch64-linux-gnu-gcc -static -Os -s -o work/output/ramdisk_kxshbin src/system_kxsh.c
+```
+
+Override with `RAMDISK_KXSH=/path/to/kxshbin` when testing another bootstrap.

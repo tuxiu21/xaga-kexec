@@ -1,6 +1,6 @@
-#!/data/kexec/busybox sh
+#!/mnt/kexec/busybox sh
 
-DATA_BASE="${KEXEC_BASE:-/data/kexec}"
+DATA_BASE="${KEXEC_BASE:-/mnt/kexec}"
 KEXEC_BASE="$DATA_BASE"
 BB="$DATA_BASE/busybox"
 LOG_FILE="$DATA_BASE/kxsh.log"
