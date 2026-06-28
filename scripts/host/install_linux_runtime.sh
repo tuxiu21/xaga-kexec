@@ -6,8 +6,9 @@ set -euo pipefail
 LINUX_DEV="${LINUX_DEV:-/dev/block/by-name/linux}"
 LINUX_DEV_FALLBACK="${LINUX_DEV_FALLBACK:-/dev/block/sdc88}"
 LINUX_MOUNT="${LINUX_MOUNT:-/mnt/linux_kexec}"
-LINUX_RUNTIME="${LINUX_RUNTIME:-$LINUX_MOUNT/kexec}"
-LEAN_RUNTIME="${LEAN_RUNTIME:-/mnt/kexec}"
+LINUX_RUNTIME="${LINUX_RUNTIME:-$LINUX_MOUNT}"
+LEAN_RUNTIME="${LEAN_RUNTIME:-/kexec}"
+ADB_STAGE="${ADB_STAGE:-/data/local/tmp/linux_runtime_stage}"
 RAMDISK="${RAMDISK:-$VENDOR_DIR/ramdisk_patched.cpio}"
 ADBD="${ADBD:-$ROOT/prebuilt/adbd}"
 
@@ -19,45 +20,6 @@ adb_root_shell()
   else
     "$ADB" shell "su -c '$script'"
   fi
-}
-
-adb_root_write_file()
-{
-  local src="$1"
-  local dst="$2"
-  if [ "$("$ADB" shell 'id -u 2>/dev/null' | tr -d '\r')" = "0" ]; then
-    "$ADB" shell -T "cat > \"$dst\"" < "$src"
-  else
-    "$ADB" shell -T "su -c 'cat > \"$dst\"'" < "$src"
-  fi
-}
-
-adb_root_copy_tree()
-{
-  local src_dir="$1"
-  local dst_dir="$2"
-  local rel
-
-  (
-    cd "$src_dir"
-    find . -type d -print
-  ) | while IFS= read -r rel; do
-    rel="${rel#./}"
-    [ -n "$rel" ] || continue
-    adb_root_shell "mkdir -p \"$dst_dir/$rel\""
-  done
-
-  (
-    cd "$src_dir"
-    find . -type f -print
-  ) | while IFS= read -r rel; do
-    rel="${rel#./}"
-    parent="$(dirname "$rel")"
-    if [ "$parent" != "." ]; then
-      adb_root_shell "mkdir -p \"$dst_dir/$parent\""
-    fi
-    adb_root_write_file "$src_dir/$rel" "$dst_dir/$rel"
-  done
 }
 
 runtime_paths=(
@@ -137,6 +99,7 @@ chmod 0755 "$tmp/push"/adbd "$tmp/push"/busybox "$tmp/push"/dropbear \
 chmod 0644 "$tmp/push"/adblib/*.so
 
 wifi_modules="mtk-mbox mtk_rpmsg_mbox mtk_tinysys_ipi mtk-ssc connadp mcupm gpueb fhctl mtk-afe-external scp connscp mtk_low_battery_throttling mtk_dynamic_loading_throttling mtk_mdpm mtk_pbm ccci_util_lib ccci_auxadc rps_perf ccmni ccci_md_all conninfra connfem wmt_chrdev_wifi_connac2 mddp wlan_drv_gen4m_6895"
+wifi_firmware_patterns="WIFI_RAM_CODE_soc7_0* soc7_0_ram_wmmcu* conninfra.cfg wifi.cfg wifi_sigma.cfg txpowerctrl.cfg"
 
 adb_root_shell "
   set -e
@@ -145,17 +108,21 @@ adb_root_shell "
     mount -t ext4 -o rw,noatime \"$LINUX_DEV\" \"$LINUX_MOUNT\" 2>/dev/null ||
       mount -t ext4 -o rw,noatime \"$LINUX_DEV_FALLBACK\" \"$LINUX_MOUNT\"
   fi
-  rm -rf \"$LINUX_RUNTIME/.stage\"
-  mkdir -p \"$LINUX_RUNTIME/.stage\"
+  rm -rf \"$LINUX_RUNTIME/.stage\" \"$ADB_STAGE\"
+  mkdir -p \"$ADB_STAGE\"
+  chmod 0777 \"$ADB_STAGE\"
 "
 
-adb_root_copy_tree "$tmp/push" "$LINUX_RUNTIME/.stage"
+"$ADB" push "$tmp/push/." "$ADB_STAGE/"
 
 adb_root_shell "
   set -e
   mkdir -p \"$LINUX_RUNTIME\" \"$LINUX_RUNTIME/root/.ssh\" \"$LINUX_RUNTIME/run\" \"$LINUX_RUNTIME/adblib\"
-  cp -R \"$LINUX_RUNTIME/.stage/.\" \"$LINUX_RUNTIME/\"
-  rm -rf \"$LINUX_RUNTIME/.stage\"
+  find \"$LINUX_RUNTIME\" -maxdepth 1 -type l -lname \"$LEAN_RUNTIME/busybox\" -delete 2>/dev/null || true
+  rm -rf \"$LINUX_RUNTIME/kexec\" \"$LINUX_RUNTIME/linux_kexec\" \
+    \"$LINUX_RUNTIME/kxshbinxx\" \"$LINUX_RUNTIME/kxshbinxxxx.disabled\"
+  cp -R \"$ADB_STAGE/.\" \"$LINUX_RUNTIME/\"
+  rm -rf \"$ADB_STAGE\" \"$LINUX_RUNTIME/.stage\"
   ln -sf \"$LEAN_RUNTIME/busybox\" \"$LINUX_RUNTIME/sh\"
   ln -sf \"$LEAN_RUNTIME/enter-ubuntu.sh\" \"$LINUX_RUNTIME/enter_ubuntu.sh\"
   printf \"root::0:0:root:$LEAN_RUNTIME/root:$LEAN_RUNTIME/sh\n\" > \"$LINUX_RUNTIME/passwd\"
@@ -164,8 +131,9 @@ adb_root_shell "
   chmod 700 \"$LINUX_RUNTIME/root\" \"$LINUX_RUNTIME/root/.ssh\"
   chmod 600 \"$LINUX_RUNTIME/root/.ssh/authorized_keys\" \"$LINUX_RUNTIME/shadow\" 2>/dev/null || true
   chmod 644 \"$LINUX_RUNTIME/passwd\" \"$LINUX_RUNTIME/group\"
-  chmod 0755 \"$LINUX_RUNTIME\" \"$LINUX_RUNTIME\"/busybox \"$LINUX_RUNTIME\"/dropbear \"$LINUX_RUNTIME\"/dropbearkey \"$LINUX_RUNTIME\"/watchdog_feeder \"$LINUX_RUNTIME\"/boot_ubuntu_ext4 \"$LINUX_RUNTIME\"/kxsh.sh \"$LINUX_RUNTIME\"/ubuntu_phase_a_init.sh \"$LINUX_RUNTIME\"/wifi_bringup.sh \"$LINUX_RUNTIME\"/enter-ubuntu.sh \"$LINUX_RUNTIME\"/linker64 \"$LINUX_RUNTIME\"/adbd
-  chmod 0644 \"$LINUX_RUNTIME\"/adblib/*.so
+  chmod 0755 \"$LINUX_RUNTIME\"
+  chmod 0755 \"$LINUX_RUNTIME\"/busybox \"$LINUX_RUNTIME\"/dropbear \"$LINUX_RUNTIME\"/dropbearkey \"$LINUX_RUNTIME\"/watchdog_feeder \"$LINUX_RUNTIME\"/boot_ubuntu_ext4 \"$LINUX_RUNTIME\"/kxsh.sh \"$LINUX_RUNTIME\"/ubuntu_phase_a_init.sh \"$LINUX_RUNTIME\"/wifi_bringup.sh \"$LINUX_RUNTIME\"/enter-ubuntu.sh \"$LINUX_RUNTIME\"/linker64 \"$LINUX_RUNTIME\"/adbd 2>/dev/null || true
+  chmod 0644 \"$LINUX_RUNTIME\"/adblib/*.so 2>/dev/null || true
   rm -rf \"$LINUX_RUNTIME/modules\"
   mkdir -p \"$LINUX_RUNTIME/modules\"
   for mod in $wifi_modules; do
@@ -174,7 +142,18 @@ adb_root_shell "
     done
   done
   chmod 0644 \"$LINUX_RUNTIME/modules\"/*.ko 2>/dev/null || true
+  rm -rf \"$LINUX_RUNTIME/firmware\"
+  mkdir -p \"$LINUX_RUNTIME/firmware\"
+  for pattern in $wifi_firmware_patterns; do
+    for d in /vendor/firmware /vendor/etc/firmware; do
+      for fw in \"\$d\"/\$pattern; do
+        [ -f \"\$fw\" ] && cp \"\$fw\" \"$LINUX_RUNTIME/firmware/\"
+      done
+    done
+  done
+  chmod 0644 \"$LINUX_RUNTIME/firmware\"/* 2>/dev/null || true
   echo 180 > \"$LINUX_RUNTIME/panic_after\"
   sync
   ls -l \"$LINUX_RUNTIME\" | sed -n \"1,120p\"
+  ls -l \"$LINUX_RUNTIME/firmware\" | sed -n \"1,80p\"
 "

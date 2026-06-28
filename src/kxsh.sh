@@ -1,11 +1,11 @@
-#!/mnt/kexec/busybox sh
+#!/kexec/busybox sh
 
-DATA_BASE="${KEXEC_BASE:-/mnt/kexec}"
+DATA_BASE="${KEXEC_BASE:-/kexec}"
 KEXEC_BASE="$DATA_BASE"
 BB="$DATA_BASE/busybox"
 LOG_FILE="$DATA_BASE/kxsh.log"
 ADBD_LOG="$DATA_BASE/adbd.log"
-PATH="$DATA_BASE:/system/bin:/vendor/bin"
+PATH="$DATA_BASE/bin:$DATA_BASE:/system/bin:/vendor/bin"
 export PATH KEXEC_BASE
 
 log()
@@ -39,6 +39,43 @@ log_ls()
         echo "kexec-system-init: $label:"
         "$BB" ls -la "$path" 2>&1
     } >> "$LOG_FILE" 2>/dev/null
+}
+
+log_usb_state()
+{
+    label="$1"
+
+    log "usb state: $label"
+    for node in \
+        /sys/devices/platform/soc/11201000.usb0/mode \
+        /sys/devices/platform/soc/11211000.usb1/mode \
+        /sys/class/udc/11201000.usb0/state \
+        /sys/class/udc/11211000.usb1/state \
+        /sys/class/udc/dummy_udc.0/state
+    do
+        [ -e "$node" ] && log_file "usb state $node" "$node"
+    done
+}
+
+force_usb_device_mode()
+{
+    val="${KEXEC_USB_MODE_VALUE:-1}"
+
+    for node in \
+        /sys/devices/platform/soc/11201000.usb0/mode \
+        /sys/devices/platform/soc/11211000.usb1/mode
+    do
+        [ -e "$node" ] || continue
+        log_file "usb mode before $node" "$node"
+        if [ -w "$node" ]; then
+            echo "$val" > "$node" 2>/dev/null
+            log "set usb mode $node=$val rc=$?"
+            "$BB" sleep 1
+            log_file "usb mode after $node" "$node"
+        else
+            log "usb mode not writable: $node"
+        fi
+    done
 }
 
 ensure_reasonable_time()
@@ -77,7 +114,8 @@ mount_if_needed()
 
 prepare_base()
 {
-    "$BB" --install -s "$DATA_BASE" 2>/dev/null
+    "$BB" mkdir -p "$DATA_BASE/bin"
+    "$BB" --install -s "$DATA_BASE/bin" 2>/dev/null
     mount_if_needed /proc proc proc ""
     mount_if_needed /sys sysfs sysfs ""
     mount_if_needed /dev devtmpfs devtmpfs "mode=0755"
@@ -228,6 +266,9 @@ setup_usb_adb()
     log_ls "system bin runtime" /system/bin
 
     log_ls "UDC candidates" /sys/class/udc
+    log_usb_state "before force mode"
+    force_usb_device_mode
+    log_usb_state "after force mode"
 
     if [ -e /sys/fs/selinux/enforce ]; then
         echo 0 > /sys/fs/selinux/enforce 2>/dev/null && log "SELinux set permissive"

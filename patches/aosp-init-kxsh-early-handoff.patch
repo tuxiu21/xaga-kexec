@@ -1,18 +1,134 @@
 diff --git a/system/core/init/first_stage_init.cpp b/system/core/init/first_stage_init.cpp
-index 8ce1a0b..4b33f12 100644
+index 8ce1a0b..3d1c9a8 100644
 --- a/system/core/init/first_stage_init.cpp
 +++ b/system/core/init/first_stage_init.cpp
-@@ -356,6 +356,13 @@ int FirstStageMain(int argc, char** argv) {
-         SwitchRoot("/first_stage_ramdisk");
-     }
+@@ -24,6 +24,7 @@
+ #include <sys/stat.h>
+ #include <sys/sysmacros.h>
+ #include <sys/types.h>
++#include <sys/wait.h>
+ #include <sys/utsname.h>
+ #include <unistd.h>
  
-+    if (access("/kxshbin", X_OK) == 0) {
-+        const char* path = "/kxshbin";
-+        const char* args[] = {path, "selinux_setup", nullptr};
-+        execv(path, const_cast<char**>(args));
-+        PLOG(ERROR) << "execv(\"" << path << "\") failed";
+@@ -82,6 +83,43 @@ void FreeRamdisk(DIR* dir, dev_t dev) {
+     }
+ }
+ 
++bool PrepareKexecRuntime() {
++    constexpr const char* kKxshbinCandidates[] = {"/kxshbin", "/first_stage_ramdisk/kxshbin",
++                                                  nullptr};
++    const char* kxshbin = nullptr;
++    for (size_t i = 0; kKxshbinCandidates[i] != nullptr; i++) {
++        if (access(kKxshbinCandidates[i], X_OK) == 0) {
++            kxshbin = kKxshbinCandidates[i];
++            break;
++        }
++    }
++    if (kxshbin == nullptr) {
++        return false;
 +    }
 +
-     if (!DoFirstStageMount(!created_devices)) {
-         LOG(FATAL) << "Failed to mount required partitions early ...";
++    pid_t pid = fork();
++    if (pid < 0) {
++        PLOG(ERROR) << "fork() for " << kxshbin << " failed";
++        return false;
++    }
++    if (pid == 0) {
++        const char* args[] = {kxshbin, "--prepare", nullptr};
++        execv(kxshbin, const_cast<char**>(args));
++        PLOG(ERROR) << "execv(\"" << kxshbin << " --prepare\") failed";
++        _exit(127);
++    }
++
++    int status = 0;
++    if (waitpid(pid, &status, 0) != pid) {
++        PLOG(ERROR) << "waitpid() for " << kxshbin << " failed";
++        return false;
++    }
++    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
++        LOG(ERROR) << kxshbin << " --prepare failed: status=" << status;
++        return false;
++    }
++
++    LOG(INFO) << kxshbin << " --prepare completed";
++    return true;
++}
++
+ bool ForceNormalBoot(const std::string& cmdline, const std::string& bootconfig) {
+     return bootconfig.find("androidboot.force_normal_boot = \"1\"") != std::string::npos ||
+            cmdline.find("androidboot.force_normal_boot=1") != std::string::npos;
+@@ -348,16 +386,22 @@ int FirstStageMain(int argc, char** argv) {
+         setenv("INIT_FORCE_DEBUGGABLE", "true", 1);
      }
+ 
+-    if (ForceNormalBoot(cmdline, bootconfig)) {
+-        mkdir("/first_stage_ramdisk", 0755);
+-        // SwitchRoot() must be called with a mount point as the target, so we bind mount the
+-        // target directory to itself here.
+-        if (mount("/first_stage_ramdisk", "/first_stage_ramdisk", nullptr, MS_BIND, nullptr) != 0) {
+-            LOG(FATAL) << "Could not bind mount /first_stage_ramdisk to itself";
++    bool kexec_runtime_ready = PrepareKexecRuntime();
++
++    if (!kexec_runtime_ready) {
++        if (ForceNormalBoot(cmdline, bootconfig)) {
++            mkdir("/first_stage_ramdisk", 0755);
++            // SwitchRoot() must be called with a mount point as the target, so we bind mount the
++            // target directory to itself here.
++            if (mount("/first_stage_ramdisk", "/first_stage_ramdisk", nullptr, MS_BIND, nullptr) !=
++                0) {
++                LOG(FATAL) << "Could not bind mount /first_stage_ramdisk to itself";
++            }
++            SwitchRoot("/first_stage_ramdisk");
+         }
+-        SwitchRoot("/first_stage_ramdisk");
+-    }
+ 
+-    if (!DoFirstStageMount(!created_devices)) {
+-        LOG(FATAL) << "Failed to mount required partitions early ...";
++        if (!DoFirstStageMount(!created_devices)) {
++            LOG(FATAL) << "Failed to mount required partitions early ...";
++        }
+     }
+ 
+     struct stat new_root_info;
+@@ -367,7 +411,7 @@ int FirstStageMain(int argc, char** argv) {
+         old_root_dir.reset();
+     }
+ 
+-    if (old_root_dir && old_root_info.st_dev != new_root_info.st_dev) {
++    if (old_root_dir && (kexec_runtime_ready || old_root_info.st_dev != new_root_info.st_dev)) {
+         FreeRamdisk(old_root_dir.get(), old_root_info.st_dev);
+     }
+ 
+@@ -378,14 +422,29 @@ int FirstStageMain(int argc, char** argv) {
+     setenv(kEnvFirstStageStartedAt, std::to_string(start_time.time_since_epoch().count()).c_str(),
+            1);
+ 
+-    const char* path = "/system/bin/init";
+-    const char* args[] = {path, "selinux_setup", nullptr};
++    const char* path = kexec_runtime_ready ? "/kexec/busybox" : "/system/bin/init";
++    const char* args[] = {
++            path,
++            kexec_runtime_ready ? "sh" : "selinux_setup",
++            kexec_runtime_ready ? "/kexec/kxsh.sh" : nullptr,
++            nullptr,
++    };
++    const char* env[] = {
++            "KEXEC_BASE=/kexec",
++            "PATH=/kexec:/system/bin:/vendor/bin",
++            "HOME=/kexec/root",
++            nullptr,
++    };
+     auto fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
+     dup2(fd, STDOUT_FILENO);
+     dup2(fd, STDERR_FILENO);
+     close(fd);
+-    execv(path, const_cast<char**>(args));
++    if (kexec_runtime_ready) {
++        execve(path, const_cast<char**>(args), const_cast<char**>(env));
++    } else {
++        execv(path, const_cast<char**>(args));
++    }
+ 
+     // execv() only returns if an error happened, in which case we
+     // panic and never fall through this conditional.

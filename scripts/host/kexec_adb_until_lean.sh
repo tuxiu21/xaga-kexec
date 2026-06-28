@@ -14,11 +14,11 @@ PANIC_AFTER="${PANIC_AFTER:-60}"
 NOEXEC_MAX="${NOEXEC_MAX:-3}"
 LINUX_DEV="${LINUX_DEV:-/dev/block/by-name/linux}"
 LINUX_MOUNT="${LINUX_MOUNT:-/mnt/linux_kexec}"
-LINUX_RUNTIME="${LINUX_RUNTIME:-$LINUX_MOUNT/kexec}"
+LINUX_RUNTIME="${LINUX_RUNTIME:-$LINUX_MOUNT}"
 OUT="$LOG_ROOT/kexec_adb_until_lean_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$OUT"
 
-STOCK_SERIAL=""
+STOCK_SERIAL="${STOCK_SERIAL:-}"
 
 say() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$OUT/log.txt"; }
 
@@ -85,21 +85,38 @@ pstore_last_line() {
 
 build_cmdline() {
     local base_cmdline initrd_local initrd_kib bootconfig_args normal_args
-    base_cmdline="$($ADB shell "su -c 'cat /proc/cmdline'" 2>/dev/null | tr -d '\r\n')"
+    base_cmdline=""
+    for _ in $(seq 1 5); do
+        base_cmdline="$($ADB shell "su -c 'cat /proc/cmdline'" 2>/dev/null | tr -d '\r\n')"
+        [ -n "$base_cmdline" ] && break
+        sleep 1
+    done
+    if [ -z "$base_cmdline" ]; then
+        say "failed to read non-empty /proc/cmdline"
+        return 1
+    fi
     initrd_local="$INITRD"
     case "$initrd_local" in /*) ;; *) initrd_local="$ROOT/$INITRD";; esac
     if [ -f "$initrd_local" ]; then
         initrd_kib="$(( ($(wc -c < "$initrd_local") + 1023) / 1024 ))"
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )debug_ext\\.initrd_size=[^ ]*/ /g")"
+        base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )firmware_class\\.path=[^ ]*/ /g")"
         base_cmdline="$base_cmdline debug_ext.initrd_size=$initrd_kib"
     fi
     bootconfig_args="$($ADB shell "su -c 'cat /proc/bootconfig 2>/dev/null'" | tr -d '\r' | awk '
       /^androidboot[.]/ { key=$1; sub(/^[^=]*=[[:space:]]*/, ""); gsub(/["[:space:]]/, ""); print key "=" $0 }' | tr '\n' ' ')"
-    normal_args="$bootconfig_args androidboot.force_normal_boot=1 androidboot.mode=normal androidboot.bootmode=normal androidboot.slot_suffix=_a androidboot.hardware=mt6895 androidboot.init_fatal_panic=true androidboot.init_fatal_reboot_target=bootloader loglevel=7 ignore_loglevel printk.devkmsg=on"
+    normal_args="$bootconfig_args androidboot.force_normal_boot=1 androidboot.mode=normal androidboot.bootmode=normal androidboot.slot_suffix=_a androidboot.hardware=mt6895 androidboot.init_fatal_panic=true androidboot.init_fatal_reboot_target=bootloader firmware_class.path=/kexec/firmware loglevel=7 ignore_loglevel printk.devkmsg=on"
     printf '%s\n' "$base_cmdline $normal_args"
 }
 
-STOCK_SERIAL="$($ADB devices | tr -d '\r' | awk 'NR>1 && $2=="device"{print $1; exit}')"
+if [ -z "$STOCK_SERIAL" ]; then
+    for _ in $(seq 1 10); do
+        STOCK_SERIAL="$($ADB devices 2>/dev/null | tr -d '\r' | awk 'NR>1 && $2=="device"{print $1; exit}')"
+        [ -n "$STOCK_SERIAL" ] && break
+        sleep 1
+    done
+fi
+[ -n "$STOCK_SERIAL" ] || { say "failed to detect stock adb serial"; exit 5; }
 say "initrd=$INITRD dtb=${DTB_DEV:-<live>} max=$MAX lean=$LEAN_SERIAL stock=$STOCK_SERIAL panic=${PANIC_AFTER}s out=$OUT"
 
 noexec=0
@@ -110,7 +127,7 @@ for r in $(seq 1 "$MAX"); do
     say "round $r: clearing pstore + lean logs, panic_after=${PANIC_AFTER}s"
     adb_root_shell "mkdir -p $LINUX_MOUNT; mount | grep -q \" $LINUX_MOUNT \" || mount -t ext4 -o rw,noatime $LINUX_DEV $LINUX_MOUNT 2>/dev/null || mount -t ext4 -o rw,noatime /dev/block/sdc88 $LINUX_MOUNT 2>/dev/null; rm -f /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-*; : > $LINUX_RUNTIME/kxsh.log; : > $LINUX_RUNTIME/adbd.log; rm -f $LINUX_RUNTIME/boot_ubuntu_ext4.once; echo $PANIC_AFTER > $LINUX_RUNTIME/panic_after" >/dev/null 2>&1
 
-    cmdline="$(build_cmdline)"
+    cmdline="$(build_cmdline)" || exit 5
     printf '%s\n' "$cmdline" > "$OUT/round_${r}_cmdline.txt"
 
     nonce="ADBTEST-r${r}-$(date +%s)-${RANDOM}"
@@ -137,6 +154,7 @@ for r in $(seq 1 "$MAX"); do
     if [ "$rc" = 1 ]; then
         say "round $r: neither lean adb nor stock in time; waiting for stock"
         $ADB wait-for-device >/dev/null 2>&1
+        wait_stock_ready || say "round $r: stock returned but boot_completed not seen before log pull"
     fi
 
     pull_lean_logs "$r"

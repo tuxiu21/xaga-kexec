@@ -31,12 +31,6 @@ mkdir -p vendor_root
 (
   cd vendor_root
   cpio -idm < ../vendor.cpio >/dev/null 2>&1
-  mkdir -p linux
-  for fstab in first_stage_ramdisk/fstab.mt6895 first_stage_ramdisk/fstab.emmc; do
-    [ -f "$fstab" ] || continue
-    grep -q ' /mnt ' "$fstab" || \
-      printf '/dev/block/by-name/linux /mnt ext4 noatime,nosuid,nodev wait,nofail,first_stage_mount\n' >> "$fstab"
-  done
   find . | cpio -o -H newc > ../vendor.cpio 2>/dev/null
 )
 magiskboot compress=lz4_legacy vendor.cpio "$VENDOR_LZ4"

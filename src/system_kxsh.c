@@ -10,8 +10,8 @@
 #include <sys/sysmacros.h>
 #include <unistd.h>
 
-#define LINUX_MOUNT "/mnt"
-#define LINUX_RUNTIME "/mnt/kexec"
+#define LINUX_MOUNT "/kexec"
+#define LINUX_RUNTIME "/kexec"
 
 static int make_block_node_from_sysfs(const char *name);
 
@@ -148,17 +148,9 @@ static int make_block_node_from_sysfs(const char *name)
     return 0;
 }
 
-int main(void)
+static int prepare_linux_runtime(void)
 {
-    char *linux_argv[] = { LINUX_RUNTIME "/busybox", "sh", LINUX_RUNTIME "/kxsh.sh", NULL };
-    char *linux_envp[] = {
-        "KEXEC_BASE=" LINUX_RUNTIME,
-        "PATH=" LINUX_RUNTIME ":/system/bin:/vendor/bin",
-        "HOME=" LINUX_RUNTIME "/root",
-        NULL,
-    };
-
-    logmsg("entered static ramdisk kxsh");
+    logmsg("prepare linux runtime begin");
 
     mount(NULL, "/", NULL, MS_REMOUNT, NULL);
     mount_one("proc", "/proc", "proc", 0, "");
@@ -171,6 +163,31 @@ int main(void)
 
     wait_for_runtime_nodes();
     if (mount_linux_runtime() == 0) {
+        logmsg("prepare linux runtime ok");
+        return 0;
+    }
+
+    logmsg("prepare linux runtime failed");
+    return 1;
+}
+
+int main(int argc, char **argv)
+{
+    char *linux_argv[] = { LINUX_RUNTIME "/busybox", "sh", LINUX_RUNTIME "/kxsh.sh", NULL };
+    char *linux_envp[] = {
+        "KEXEC_BASE=" LINUX_RUNTIME,
+        "PATH=" LINUX_RUNTIME ":/system/bin:/vendor/bin",
+        "HOME=" LINUX_RUNTIME "/root",
+        NULL,
+    };
+
+    logmsg("entered static ramdisk kxsh");
+
+    if (argc > 1 && strcmp(argv[1], "--prepare") == 0) {
+        return prepare_linux_runtime();
+    }
+
+    if (prepare_linux_runtime() == 0) {
         logmsg("exec " LINUX_RUNTIME "/busybox sh " LINUX_RUNTIME "/kxsh.sh");
         execve(linux_argv[0], linux_argv, linux_envp);
         logmsg("exec linux runtime failed: errno=%d", errno);

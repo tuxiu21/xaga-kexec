@@ -1,4 +1,4 @@
-#!/mnt/kexec/busybox sh
+#!/kexec/busybox sh
 # Minimal Wi-Fi bring-up for the lean kexec environment on mt6895/xaga.
 #
 # Requirements:
@@ -13,13 +13,14 @@
 # - $KEXEC_BASE/dmesg_wifi_before.log
 # - $KEXEC_BASE/dmesg_wifi_after.log
 
-BASE="${KEXEC_BASE:-/mnt/kexec}"
+BASE="${KEXEC_BASE:-/kexec}"
 BB="$BASE/busybox"
 export PATH="$BASE:/system/bin:/vendor/bin"
 LOG="$BASE/wifi_bringup.log"
 PROG="$BASE/wifi_load_progress.txt"
 DMESG_BEFORE="$BASE/dmesg_wifi_before.log"
 DMESG_AFTER="$BASE/dmesg_wifi_after.log"
+FIRMWARE_DIR="${WIFI_FIRMWARE_DIR:-$BASE/firmware}"
 POWER_WAIT_SECS="${WIFI_POWER_WAIT_SECS:-240}"
 POLL_SECS=5
 DIRS="$BASE/modules /vendor_dlkm/lib/modules /vendor/lib/modules"
@@ -37,6 +38,20 @@ log_step()
 {
     echo "$1" > "$PROG"
     "$BB" sync
+}
+
+setup_firmware_path()
+{
+    if [ -d "$FIRMWARE_DIR" ] && [ -w /sys/module/firmware_class/parameters/path ]; then
+        echo "$FIRMWARE_DIR" > /sys/module/firmware_class/parameters/path 2>/dev/null || true
+    fi
+
+    if [ -r /sys/module/firmware_class/parameters/path ]; then
+        echo "## firmware path: $("$BB" cat /sys/module/firmware_class/parameters/path 2>/dev/null)"
+    else
+        echo "## firmware path: unreadable"
+    fi
+    "$BB" ls -lh "$FIRMWARE_DIR" 2>&1 | "$BB" sed -n '1,120p'
 }
 
 load_module()
@@ -139,6 +154,8 @@ wait_for_wifi_ready()
     : > "$PROG"
     : > "$DMESG_BEFORE"
     : > "$DMESG_AFTER"
+
+    setup_firmware_path
 
     for ko in $MODULE_ORDER; do
         load_module "$ko"

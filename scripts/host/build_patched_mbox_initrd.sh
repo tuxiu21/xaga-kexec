@@ -13,6 +13,12 @@ VENDOR_CPIO_OUT="${VENDOR_CPIO_OUT:-$VENDOR_DIR/ramdisk_patched_mbox.cpio}"
 BLOCKTAG_KO="${BLOCKTAG_KO:-$BLOCKTAG_BUILD_DIR/blocktag.ko}"
 RAMDISK_KXSH="${RAMDISK_KXSH:-$OUTPUT_DIR/ramdisk_kxshbin}"
 INIT_KXSH="${INIT_KXSH:-$ROOT/prebuilt/init_first_stage_kxsh}"
+WIFI_FIRMWARE_DIR="${WIFI_FIRMWARE_DIR:-}"
+WIFI_RAMDISK_FIRMWARE="${WIFI_RAMDISK_FIRMWARE:-conninfra.cfg soc7_0_ram_wmmcu_1b_t_1_hdr.bin wifi.cfg WIFI_RAM_CODE_soc7_0_1b_t_1.bin}"
+
+if [ -n "$WIFI_FIRMWARE_DIR" ]; then
+  WIFI_FIRMWARE_DIR="$(realpath -m "$WIFI_FIRMWARE_DIR")"
+fi
 
 [ -s "$INIT_KXSH" ] || { echo "missing rebuilt first-stage init: $INIT_KXSH" >&2; exit 1; }
 
@@ -52,11 +58,6 @@ mkdir -p "$work/vendor_root"
 (
   cd "$work/vendor_root"
   cpio -idm < "$VENDOR_CPIO" >/dev/null 2>&1
-  for fstab in first_stage_ramdisk/fstab.mt6895 first_stage_ramdisk/fstab.emmc; do
-    [ -f "$fstab" ] || continue
-    grep -q ' /mnt ' "$fstab" || \
-      printf '/dev/block/by-name/linux /mnt ext4 noatime,nosuid,nodev wait,nofail,first_stage_mount\n' >> "$fstab"
-  done
   rm -f init
   cp "$OUT/mtk-mbox.stripped.ko" lib/modules/mtk-mbox.ko
   if [ -s "$BLOCKTAG_KO" ]; then
@@ -75,6 +76,15 @@ magiskboot compress=lz4_legacy "$work/vendor_mbox.cpio" "$work/vendor_ramdisk_mb
   magiskboot cpio gki.cpio 'add 0750 init init.kxsh' >/dev/null
   magiskboot cpio gki.cpio 'add 0750 kxshbin ramdisk_kxshbin' >/dev/null
   magiskboot cpio gki.cpio 'add 0750 first_stage_ramdisk/kxshbin ramdisk_kxshbin' >/dev/null
+  if [ -d "$WIFI_FIRMWARE_DIR" ]; then
+    for name in $WIFI_RAMDISK_FIRMWARE; do
+      fw="$WIFI_FIRMWARE_DIR/$name"
+      [ -f "$fw" ] || continue
+      cp "$fw" "fw_$name"
+      magiskboot cpio gki.cpio "add 0644 vendor/firmware/$name fw_$name" >/dev/null
+      magiskboot cpio gki.cpio "add 0644 first_stage_ramdisk/vendor/firmware/$name fw_$name" >/dev/null
+    done
+  fi
   magiskboot compress=lz4_legacy gki.cpio gki_patched.lz4 >/dev/null
   cat gki_patched.lz4 "$work/vendor_ramdisk_mbox.lz4" > "$INITRD_OUT"
 )
@@ -84,5 +94,11 @@ modinfo "$OUT/mtk-mbox.stripped.ko" | sed -n '1,20p'
 if [ -s "$BLOCKTAG_KO" ]; then
   echo "included blocktag: $BLOCKTAG_KO"
   modinfo "$BLOCKTAG_KO" | sed -n '1,20p'
+fi
+if [ -d "$WIFI_FIRMWARE_DIR" ]; then
+  echo "included wifi firmware: $WIFI_FIRMWARE_DIR"
+  for name in $WIFI_RAMDISK_FIRMWARE; do
+    [ -f "$WIFI_FIRMWARE_DIR/$name" ] && echo "$name"
+  done
 fi
 ls -lh "$INIT_KXSH" "$RAMDISK_KXSH" "$OUT/mtk-mbox.stripped.ko" "$VENDOR_CPIO_OUT" "$INITRD_OUT"
