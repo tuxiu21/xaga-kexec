@@ -15,6 +15,7 @@ PANIC_AFTER="${PANIC_AFTER:-180}"
 UBUNTU_WIFI="${UBUNTU_WIFI:-1}"
 UBUNTU_WIFI_WAIT="${UBUNTU_WIFI_WAIT:-260}"
 NOEXEC_MAX="${NOEXEC_MAX:-3}"
+PRE_KEXEC_MMINFRA_ON="${PRE_KEXEC_MMINFRA_ON:-1}"
 ADB_TIMEOUT="${ADB_TIMEOUT:-8s}"
 STOCK_GRACE="${STOCK_GRACE:-10}"
 LINUX_DEV="${LINUX_DEV:-/dev/block/by-name/linux}"
@@ -228,6 +229,15 @@ for r in $(seq 1 "$MAX"); do
 
     cmdline="$(build_cmdline)"
     printf '%s\n' "$cmdline" > "$OUT/round_${r}_cmdline.txt"
+
+    if [ "$PRE_KEXEC_MMINFRA_ON" = "1" ]; then
+        say "round $r: pin stock mm_infra on before kexec"
+        if ! STOCK_SERIAL="$STOCK_SERIAL" ADB="$ADB" bash "$ROOT/scripts/host/pre_kexec_mminfra_on.sh" "$STOCK_SERIAL" > "$OUT/round_${r}_pre_kexec_mminfra.log" 2>&1; then
+            say "round $r: pre-kexec mm_infra pin failed; refusing to kexec"
+            cat "$OUT/round_${r}_pre_kexec_mminfra.log"
+            exit 6
+        fi
+    fi
 
     nonce="UBUNTU-r${r}-$(date +%s)-${RANDOM}"
     say "round $r: kexec into Ubuntu rootfs path (nonce=$nonce)"

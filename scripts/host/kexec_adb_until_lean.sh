@@ -12,6 +12,7 @@ MAX="${2:-8}"
 LEAN_SERIAL="${LEAN_SERIAL:-0123456789abcdef}"
 PANIC_AFTER="${PANIC_AFTER:-60}"
 NOEXEC_MAX="${NOEXEC_MAX:-3}"
+PRE_KEXEC_MMINFRA_ON="${PRE_KEXEC_MMINFRA_ON:-1}"
 LINUX_DEV="${LINUX_DEV:-/dev/block/by-name/linux}"
 LINUX_MOUNT="${LINUX_MOUNT:-/mnt/linux_kexec}"
 LINUX_RUNTIME="${LINUX_RUNTIME:-$LINUX_MOUNT/lean}"
@@ -132,6 +133,15 @@ for r in $(seq 1 "$MAX"); do
 
     cmdline="$(build_cmdline)" || exit 5
     printf '%s\n' "$cmdline" > "$OUT/round_${r}_cmdline.txt"
+
+    if [ "$PRE_KEXEC_MMINFRA_ON" = "1" ]; then
+        say "round $r: pin stock mm_infra on before kexec"
+        if ! STOCK_SERIAL="$STOCK_SERIAL" ADB="$ADB" bash "$ROOT/scripts/host/pre_kexec_mminfra_on.sh" "$STOCK_SERIAL" > "$OUT/round_${r}_pre_kexec_mminfra.log" 2>&1; then
+            say "round $r: pre-kexec mm_infra pin failed; refusing to kexec"
+            cat "$OUT/round_${r}_pre_kexec_mminfra.log"
+            exit 6
+        fi
+    fi
 
     nonce="ADBTEST-r${r}-$(date +%s)-${RANDOM}"
     say "round $r: kexec into lean adb (nonce=$nonce)"

@@ -51,6 +51,10 @@ after kexec.
   partition's `/lean` directory. It uses `/data/local/tmp/linux_runtime_stage` only as a
   temporary stock Android transfer staging directory and removes it after copy.
 - `patched.dtb` carries the regulator always-on fix used by kexec tests.
+- Before each kexec test jump, the host scripts pin stock Android's
+  `mm_infra` power domain on through genpd/runtime PM. This avoids the first
+  kexec boot entering the new kernel with `mm_infra` off and hanging when
+  `mtk-scpsys-mt6895` first touches `mminfra_config`.
 - Wi-Fi modules load from `/kexec/lean/modules`; firmware is copied to
   `/kexec/lean/firmware`, and kexec cmdline sets `firmware_class.path=/kexec/lean/firmware`.
   Current direct-root testing skips Android `DoFirstStageMount()`, so real
@@ -250,6 +254,34 @@ This pushes the kernel image, `kexec`, the selected combined ramdisk, and
 stock Android kexec launcher staging area.
 
 ## Boot And Test
+
+### MT6895 pre-kexec mm_infra cleanup
+
+`scripts/host/kexec_adb_until_lean.sh` and
+`scripts/host/kexec_adb_until_ubuntu.sh` run this step automatically before
+`kexec -l/-e`:
+
+```sh
+echo on > /sys/devices/platform/disable_unused/disable_unused:disable-unused-pd-mm_infra/power/control
+```
+
+This uses the stock kernel's own runtime PM path. On the failing path,
+`mm_infra` starts as `off-0` and the new kernel can hang on the first
+`mminfra_config` access. After this step, `mm_infra` is `on/active` and the
+first kexec boot reaches the same `0xc000000d` state as successful later boots.
+
+Run it manually if needed:
+
+```bash
+ADB=adb.exe STOCK_SERIAL=U89PBYJBFQKNLZEY \
+  bash scripts/host/pre_kexec_mminfra_on.sh
+```
+
+Disable it only for regression testing:
+
+```bash
+PRE_KEXEC_MMINFRA_ON=0 bash scripts/host/kexec_adb_until_lean.sh
+```
 
 Lean ADB boot, using the mbox initrd by default:
 
