@@ -1,8 +1,8 @@
-#!/data/kexec/busybox sh
+#!/kexec/lean/busybox sh
 set -eu
 
-BB="${BB:-/data/kexec/busybox}"
-ROOTFS="${ROOTFS:-/data/kexec/ubuntu-rootfs}"
+BB="${BB:-/kexec/lean/busybox}"
+ROOTFS="${ROOTFS:-/kexec}"
 
 die()
 {

@@ -1,4 +1,4 @@
-#!/kexec/busybox sh
+#!/kexec/lean/busybox sh
 # Minimal Wi-Fi bring-up for the lean kexec environment on mt6895/xaga.
 #
 # Requirements:
@@ -13,7 +13,7 @@
 # - $KEXEC_BASE/dmesg_wifi_before.log
 # - $KEXEC_BASE/dmesg_wifi_after.log
 
-BASE="${KEXEC_BASE:-/kexec}"
+BASE="${KEXEC_BASE:-/kexec/lean}"
 BB="$BASE/busybox"
 export PATH="$BASE:/system/bin:/vendor/bin"
 LOG="$BASE/wifi_bringup.log"

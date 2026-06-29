@@ -1,6 +1,6 @@
-#!/kexec/busybox sh
+#!/kexec/lean/busybox sh
 
-DATA_BASE="${KEXEC_BASE:-/kexec}"
+DATA_BASE="${KEXEC_BASE:-/kexec/lean}"
 KEXEC_BASE="$DATA_BASE"
 BB="$DATA_BASE/busybox"
 LOG_FILE="$DATA_BASE/kxsh.log"
@@ -444,14 +444,14 @@ prepare_accounts
 start_watchdog_feeder
 start_panic_timer
 
-if [ -f "$DATA_BASE/boot_ubuntu_ext4.once" ]; then
-    "$BB" rm -f "$DATA_BASE/boot_ubuntu_ext4.once"
+if [ -f "$DATA_BASE/boot_ubuntu_rootfs.once" ]; then
+    "$BB" rm -f "$DATA_BASE/boot_ubuntu_rootfs.once"
     "$BB" sync 2>/dev/null
-    if [ -x "$DATA_BASE/boot_ubuntu_ext4" ]; then
-        log "boot_ubuntu_ext4 flag present; switching root before lean adb"
-        exec "$DATA_BASE/boot_ubuntu_ext4"
+    if [ -x "$DATA_BASE/boot_ubuntu_rootfs" ]; then
+        log "boot_ubuntu_rootfs flag present; switching root before lean adb"
+        exec "$DATA_BASE/boot_ubuntu_rootfs"
     fi
-    log "boot_ubuntu_ext4 flag present but binary is missing"
+    log "boot_ubuntu_rootfs flag present but binary is missing"
 fi
 
 setup_usb_adb

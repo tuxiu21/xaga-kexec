@@ -1,17 +1,13 @@
 #define _GNU_SOURCE
-#include <errno.h>
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
-#include <sys/reboot.h>
 #include <sys/stat.h>
-#include <sys/statfs.h>
-#include <sys/sysmacros.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -19,10 +15,10 @@
 #define MS_MOVE 8192
 #endif
 
-#define LOG_FILE "/data/kexec/boot_ubuntu_ext4.log"
-#define IMAGE "/data/kexec/ubuntu.ext4"
-#define INIT_SRC "/data/kexec/ubuntu_phase_a_init.sh"
-#define NEWROOT "/tmp/newroot"
+#define NEWROOT "/kexec"
+#define LEAN "/kexec/lean"
+#define LOG_FILE LEAN "/boot_ubuntu_rootfs.log"
+#define INIT_SRC LEAN "/ubuntu_phase_a_init.sh"
 #define SWITCH_INIT "/phase_a_init"
 
 static void mkdir_p(const char *path, mode_t mode)
@@ -47,16 +43,14 @@ static void vlogmsg(const char *fmt, va_list ap)
     int fd;
 
     vsnprintf(msg, sizeof(msg), fmt, ap);
-
     fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
     if (fd >= 0) {
-        dprintf(fd, "boot-ubuntu-ext4: %s\n", msg);
+        dprintf(fd, "boot-ubuntu-rootfs: %s\n", msg);
         close(fd);
     }
-
     fd = open(LOG_FILE, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     if (fd >= 0) {
-        dprintf(fd, "boot-ubuntu-ext4: %s\n", msg);
+        dprintf(fd, "boot-ubuntu-rootfs: %s\n", msg);
         close(fd);
     }
 }
@@ -77,12 +71,14 @@ static void panic_now(void)
     sync();
     fd = open("/proc/sys/kernel/sysrq", O_WRONLY | O_CLOEXEC);
     if (fd >= 0) {
-        write(fd, "1\n", 2);
+        if (write(fd, "1\n", 2) < 0) {
+        }
         close(fd);
     }
     fd = open("/proc/sysrq-trigger", O_WRONLY | O_CLOEXEC);
     if (fd >= 0) {
-        write(fd, "c\n", 2);
+        if (write(fd, "c\n", 2) < 0) {
+        }
         close(fd);
     }
     for (;;)
@@ -97,64 +93,6 @@ static void die(const char *fmt, ...)
     vlogmsg(fmt, ap);
     va_end(ap);
     panic_now();
-}
-
-static int read_major_minor(const char *path, unsigned int *major, unsigned int *minor)
-{
-    char buf[64];
-    int fd;
-    ssize_t n;
-
-    fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0)
-        return -1;
-    n = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (n <= 0)
-        return -1;
-    buf[n] = '\0';
-    return sscanf(buf, "%u:%u", major, minor) == 2 ? 0 : -1;
-}
-
-static int make_node(const char *sysfs, const char *node, mode_t mode, mode_t type)
-{
-    unsigned int major, minor;
-
-    if (access(node, F_OK) == 0)
-        return 0;
-    if (read_major_minor(sysfs, &major, &minor) != 0)
-        return -1;
-
-    mkdir_p(strrchr(node, '/') == node ? "/" : "/dev", 0755);
-    if (mknod(node, type | mode, makedev(major, minor)) != 0 && errno != EEXIST)
-        return -1;
-    chmod(node, mode);
-    return 0;
-}
-
-static void prepare_loop_nodes(void)
-{
-    char sysfs[64];
-    char node[32];
-    int i;
-
-    make_node("/sys/class/misc/loop-control/dev", "/dev/loop-control", 0600, S_IFCHR);
-    for (i = 0; i < 8; i++) {
-        snprintf(sysfs, sizeof(sysfs), "/sys/class/block/loop%d/dev", i);
-        snprintf(node, sizeof(node), "/dev/loop%d", i);
-        make_node(sysfs, node, 0600, S_IFBLK);
-    }
-}
-
-static int mount_if_needed(const char *src, const char *target, const char *type,
-                           unsigned long flags, const char *data)
-{
-    mkdir_p(target, 0755);
-    if (mount(src, target, type, flags, data) == 0)
-        return 0;
-    if (errno == EBUSY)
-        return 0;
-    return -1;
 }
 
 static int copy_file(const char *src, const char *dst, mode_t mode)
@@ -195,38 +133,15 @@ static int copy_file(const char *src, const char *dst, mode_t mode)
     return n == 0 ? 0 : -1;
 }
 
-static const char *find_loop(void)
+static int mount_if_needed(const char *src, const char *target, const char *type,
+                           unsigned long flags, const char *data)
 {
-    static char node[32];
-    int i, fd;
-
-    for (i = 0; i < 8; i++) {
-        snprintf(node, sizeof(node), "/dev/loop%d", i);
-        fd = open(node, O_RDONLY | O_CLOEXEC);
-        if (fd < 0)
-            continue;
-        close(fd);
-        return node;
-    }
-    return NULL;
-}
-
-static void attach_loop_with_busybox(const char *loop)
-{
-    pid_t pid;
-    int status;
-
-    pid = fork();
-    if (pid < 0)
-        die("fork losetup failed errno=%d", errno);
-    if (pid == 0) {
-        execl("/data/kexec/busybox", "busybox", "losetup", loop, IMAGE, (char *)NULL);
-        _exit(127);
-    }
-    if (waitpid(pid, &status, 0) < 0)
-        die("wait losetup failed errno=%d", errno);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-        die("losetup failed status=0x%x", status);
+    mkdir_p(target, 0755);
+    if (mount(src, target, type, flags, data) == 0)
+        return 0;
+    if (errno == EBUSY)
+        return 0;
+    return -1;
 }
 
 static void move_mount_if_present(const char *src, const char *dst)
@@ -256,39 +171,6 @@ static int parse_pid(const char *name, pid_t *pid)
     return 0;
 }
 
-static void reap_children(void)
-{
-    int status;
-
-    while (waitpid(-1, &status, WNOHANG) > 0)
-        ;
-}
-
-static void kick_watchdog_once(void)
-{
-    static const char *nodes[] = {
-        "/dev/watchdog0",
-        "/dev/watchdog",
-        NULL,
-    };
-    const char **node;
-    const char kick = 'K';
-    int fd;
-
-    for (node = nodes; *node; node++) {
-        fd = open(*node, O_WRONLY | O_CLOEXEC);
-        if (fd < 0)
-            continue;
-        if (write(fd, &kick, 1) == 1)
-            logmsg("kicked watchdog via %s", *node);
-        else
-            logmsg("watchdog kick via %s failed errno=%d", *node, errno);
-        close(fd);
-        return;
-    }
-    logmsg("warning: no watchdog node available for final kick");
-}
-
 static int process_has_cmdline(pid_t pid)
 {
     char path[64];
@@ -313,64 +195,40 @@ static void signal_other_processes(int sig, int *sent, int *failed)
     pid_t pid;
 
     dir = opendir("/proc");
-    if (!dir) {
-        logmsg("warning: opendir /proc failed errno=%d", errno);
+    if (!dir)
         return;
-    }
-
     while ((de = readdir(dir)) != NULL) {
-        if (parse_pid(de->d_name, &pid) != 0)
-            continue;
-        if (pid == self)
+        if (parse_pid(de->d_name, &pid) != 0 || pid == self)
             continue;
         if (!process_has_cmdline(pid))
             continue;
-        if (kill(pid, sig) == 0) {
+        if (kill(pid, sig) == 0)
             (*sent)++;
-        } else if (errno != ESRCH) {
+        else if (errno != ESRCH)
             (*failed)++;
-        }
     }
-
     closedir(dir);
 }
 
-static void kill_lean_processes(void)
+static void clean_lean_processes(void)
 {
-    int term_sent = 0, term_failed = 0;
-    int kill_sent = 0, kill_failed = 0;
-    int fd;
+    int sent = 0, failed = 0;
 
-    logmsg("cleaning lean userspace before Ubuntu handoff");
-    fd = open("/config/usb_gadget/g1/UDC", O_WRONLY | O_CLOEXEC);
-    if (fd >= 0) {
-        if (write(fd, "\n", 1) == 1)
-            logmsg("unbound lean USB gadget");
-        else
-            logmsg("warning: failed to unbind lean USB gadget errno=%d", errno);
-        close(fd);
-    } else {
-        logmsg("warning: no lean USB gadget UDC node errno=%d", errno);
-    }
-    kick_watchdog_once();
-
-    signal_other_processes(SIGTERM, &term_sent, &term_failed);
-    logmsg("sent SIGTERM to %d processes (%d failed)", term_sent, term_failed);
+    logmsg("cleaning lean userspace before rootfs handoff");
+    signal_other_processes(SIGTERM, &sent, &failed);
+    logmsg("sent SIGTERM to %d processes (%d failed)", sent, failed);
     sleep(1);
-    reap_children();
-
-    kick_watchdog_once();
-    signal_other_processes(SIGKILL, &kill_sent, &kill_failed);
-    logmsg("sent SIGKILL to %d remaining processes (%d failed)", kill_sent, kill_failed);
+    while (waitpid(-1, NULL, WNOHANG) > 0)
+        ;
+    sent = 0;
+    failed = 0;
+    signal_other_processes(SIGKILL, &sent, &failed);
+    logmsg("sent SIGKILL to %d remaining processes (%d failed)", sent, failed);
     sleep(1);
-    reap_children();
-
-    kick_watchdog_once();
 }
 
 int main(void)
 {
-    const char *loop;
     char new_init[256];
     char *argv[] = { SWITCH_INIT, NULL };
     char *envp[] = {
@@ -380,30 +238,19 @@ int main(void)
         NULL,
     };
 
-    logmsg("begin image=%s newroot=%s init=%s", IMAGE, NEWROOT, INIT_SRC);
-
+    logmsg("begin direct rootfs newroot=%s init=%s", NEWROOT, INIT_SRC);
     mount_if_needed("proc", "/proc", "proc", 0, "");
     mount_if_needed("sysfs", "/sys", "sysfs", 0, "");
     mount_if_needed("devtmpfs", "/dev", "devtmpfs", 0, "mode=0755");
     mount_if_needed("devpts", "/dev/pts", "devpts", 0, "mode=0620,ptmxmode=0666");
-    mount_if_needed("tmpfs", "/tmp", "tmpfs", 0, "mode=1777");
+    mount_if_needed("configfs", "/config", "configfs", 0, "");
 
-    if (access(IMAGE, R_OK) != 0)
-        die("missing image %s errno=%d", IMAGE, errno);
+    if (access(NEWROOT "/bin/sh", X_OK) != 0)
+        die("missing Ubuntu shell at " NEWROOT "/bin/sh errno=%d", errno);
+    if (access(NEWROOT "/etc/os-release", R_OK) != 0)
+        die("missing Ubuntu os-release errno=%d", errno);
     if (access(INIT_SRC, X_OK) != 0)
         die("missing init %s errno=%d", INIT_SRC, errno);
-
-    prepare_loop_nodes();
-    loop = find_loop();
-    if (!loop)
-        die("no loop device available");
-    logmsg("using loop=%s", loop);
-    attach_loop_with_busybox(loop);
-
-    mkdir_p(NEWROOT, 0755);
-    if (mount(loop, NEWROOT, "ext4", MS_NOATIME, "") != 0)
-        die("mount %s on %s failed errno=%d", loop, NEWROOT, errno);
-    logmsg("mounted %s on %s", loop, NEWROOT);
 
     mkdir_p(NEWROOT "/proc", 0755);
     mkdir_p(NEWROOT "/sys", 0755);
@@ -422,7 +269,7 @@ int main(void)
     mount_if_needed("tmpfs", NEWROOT "/run", "tmpfs", 0, "mode=0755");
     mount_if_needed("none", "/sys/fs/cgroup", "cgroup2", 0, "");
 
-    kill_lean_processes();
+    clean_lean_processes();
 
     logmsg("moving mounts and switching root");
     move_mount_if_present("/sys", NEWROOT "/sys");
@@ -440,7 +287,6 @@ int main(void)
     if (chdir("/") != 0)
         die("chdir / failed errno=%d", errno);
 
-    logmsg("exec %s", SWITCH_INIT);
     execve(SWITCH_INIT, argv, envp);
     die("exec %s failed errno=%d", SWITCH_INIT, errno);
 }

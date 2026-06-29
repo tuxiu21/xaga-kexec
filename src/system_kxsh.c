@@ -11,7 +11,7 @@
 #include <unistd.h>
 
 #define LINUX_MOUNT "/kexec"
-#define LINUX_RUNTIME "/kexec"
+#define LINUX_RUNTIME "/kexec/lean"
 
 static int make_block_node_from_sysfs(const char *name);
 
@@ -80,10 +80,10 @@ static int mount_linux_runtime(void)
             errno == EBUSY) {
             if (access(LINUX_RUNTIME "/busybox", X_OK) == 0 &&
                 access(LINUX_RUNTIME "/kxsh.sh", R_OK) == 0) {
-                logmsg("mounted linux runtime at " LINUX_RUNTIME);
+                logmsg("mounted linux root at " LINUX_MOUNT ", lean runtime at " LINUX_RUNTIME);
                 return 0;
             }
-            logmsg("linux partition mounted, but " LINUX_RUNTIME " is incomplete");
+            logmsg("linux partition mounted, but lean runtime is incomplete at " LINUX_RUNTIME);
             return -1;
         }
     }

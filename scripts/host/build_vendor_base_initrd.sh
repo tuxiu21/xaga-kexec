@@ -3,13 +3,29 @@ set -euo pipefail
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
-"$ADB" shell getprop ro.boot.slot_suffix
+SLOT_SUFFIX="${SLOT_SUFFIX:-}"
+if [ -z "$SLOT_SUFFIX" ]; then
+  SLOT_SUFFIX="$("$ADB" shell getprop ro.boot.slot_suffix | tr -d '\r\n')"
+fi
+[ -n "$SLOT_SUFFIX" ] || SLOT_SUFFIX="_a"
 
-"$ADB" shell "su -c 'dd if=/dev/block/by-name/vendor_boot_a of=/data/local/tmp/vendor_boot_a.img bs=4M'"
-"$ADB" pull /data/local/tmp/vendor_boot_a.img "$VENDOR_DIR/vendor_boot_a.img"
+# Keep vendor_boot in lockstep with the boot image/current Android slot.
+VENDOR_BOOT_PART="${VENDOR_BOOT_PART:-/dev/block/by-name/vendor_boot${SLOT_SUFFIX}}"
+VENDOR_BOOT_IMAGE="${VENDOR_BOOT_IMAGE:-$VENDOR_DIR/vendor_boot${SLOT_SUFFIX}.img}"
+case "$VENDOR_BOOT_IMAGE" in
+  /*) ;;
+  *) VENDOR_BOOT_IMAGE="$(realpath -m "$VENDOR_BOOT_IMAGE")" ;;
+esac
+
+if [ ! -s "$VENDOR_BOOT_IMAGE" ]; then
+  # Stage the raw partition image on-device, then pull it to the host.
+  "$ADB" shell "su -c 'dd if=$VENDOR_BOOT_PART of=/data/local/tmp/vendor_boot${SLOT_SUFFIX}.img bs=4M'"
+  "$ADB" pull "/data/local/tmp/vendor_boot${SLOT_SUFFIX}.img" "$VENDOR_BOOT_IMAGE"
+fi
 
 cd "$VENDOR_DIR"
-magiskboot unpack vendor_boot_a.img || true
+rm -f kernel ramdisk.cpio vendor_ramdisk* header
+magiskboot unpack "$VENDOR_BOOT_IMAGE" || true
 if [ ! -s "$VENDOR_DIR/ramdisk.cpio" ]; then
   echo "magiskboot did not produce $VENDOR_DIR/ramdisk.cpio" >&2
   exit 1

@@ -14,7 +14,7 @@ PANIC_AFTER="${PANIC_AFTER:-60}"
 NOEXEC_MAX="${NOEXEC_MAX:-3}"
 LINUX_DEV="${LINUX_DEV:-/dev/block/by-name/linux}"
 LINUX_MOUNT="${LINUX_MOUNT:-/mnt/linux_kexec}"
-LINUX_RUNTIME="${LINUX_RUNTIME:-$LINUX_MOUNT}"
+LINUX_RUNTIME="${LINUX_RUNTIME:-$LINUX_MOUNT/lean}"
 OUT="$LOG_ROOT/kexec_adb_until_lean_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$OUT"
 
@@ -84,7 +84,7 @@ pstore_last_line() {
 }
 
 build_cmdline() {
-    local base_cmdline initrd_local initrd_kib bootconfig_args normal_args
+    local base_cmdline initrd_local initrd_kib bootconfig_args normal_args slot_suffix
     base_cmdline=""
     for _ in $(seq 1 5); do
         base_cmdline="$($ADB shell "su -c 'cat /proc/cmdline'" 2>/dev/null | tr -d '\r\n')"
@@ -103,9 +103,12 @@ build_cmdline() {
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )firmware_class\\.path=[^ ]*/ /g")"
         base_cmdline="$base_cmdline debug_ext.initrd_size=$initrd_kib"
     fi
+    # Preserve the active Android slot in the synthetic kexec cmdline.
+    slot_suffix="$($ADB shell "su -c 'getprop ro.boot.slot_suffix'" 2>/dev/null | tr -d '\r\n')"
+    [ -n "$slot_suffix" ] || slot_suffix="_a"
     bootconfig_args="$($ADB shell "su -c 'cat /proc/bootconfig 2>/dev/null'" | tr -d '\r' | awk '
       /^androidboot[.]/ { key=$1; sub(/^[^=]*=[[:space:]]*/, ""); gsub(/["[:space:]]/, ""); print key "=" $0 }' | tr '\n' ' ')"
-    normal_args="$bootconfig_args androidboot.force_normal_boot=1 androidboot.mode=normal androidboot.bootmode=normal androidboot.slot_suffix=_a androidboot.hardware=mt6895 androidboot.init_fatal_panic=true androidboot.init_fatal_reboot_target=bootloader firmware_class.path=/kexec/firmware loglevel=7 ignore_loglevel printk.devkmsg=on"
+    normal_args="$bootconfig_args androidboot.force_normal_boot=1 androidboot.mode=normal androidboot.bootmode=normal androidboot.slot_suffix=$slot_suffix androidboot.hardware=mt6895 androidboot.init_fatal_panic=true androidboot.init_fatal_reboot_target=bootloader firmware_class.path=/kexec/lean/firmware loglevel=7 ignore_loglevel printk.devkmsg=on"
     printf '%s\n' "$base_cmdline $normal_args"
 }
 
@@ -125,7 +128,7 @@ for r in $(seq 1 "$MAX"); do
     wait_stock_ready || say "round $r: boot_completed not seen, continuing"
 
     say "round $r: clearing pstore + lean logs, panic_after=${PANIC_AFTER}s"
-    adb_root_shell "mkdir -p $LINUX_MOUNT; mount | grep -q \" $LINUX_MOUNT \" || mount -t ext4 -o rw,noatime $LINUX_DEV $LINUX_MOUNT 2>/dev/null || mount -t ext4 -o rw,noatime /dev/block/sdc88 $LINUX_MOUNT 2>/dev/null; rm -f /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-*; : > $LINUX_RUNTIME/kxsh.log; : > $LINUX_RUNTIME/adbd.log; rm -f $LINUX_RUNTIME/boot_ubuntu_ext4.once; echo $PANIC_AFTER > $LINUX_RUNTIME/panic_after" >/dev/null 2>&1
+    adb_root_shell "mkdir -p $LINUX_MOUNT; mount | grep -q \" $LINUX_MOUNT \" || mount -t ext4 -o rw,noatime $LINUX_DEV $LINUX_MOUNT 2>/dev/null || mount -t ext4 -o rw,noatime /dev/block/sdc88 $LINUX_MOUNT 2>/dev/null; rm -f /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-*; : > $LINUX_RUNTIME/kxsh.log; : > $LINUX_RUNTIME/adbd.log; rm -f $LINUX_RUNTIME/boot_ubuntu_rootfs.once; echo $PANIC_AFTER > $LINUX_RUNTIME/panic_after" >/dev/null 2>&1
 
     cmdline="$(build_cmdline)" || exit 5
     printf '%s\n' "$cmdline" > "$OUT/round_${r}_cmdline.txt"

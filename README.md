@@ -1,8 +1,9 @@
 # Kexec Lean Linux on mt6895
 
-This project boots a lean Linux userspace on xaga/mt6895 hardware through
-`kexec`. The current default path does not modify `/system`; the lean runtime is
-stored on the dedicated `linux` partition, not on `/data`.
+This project boots a lean rescue userspace, and optionally a direct-root Ubuntu
+rootfs, on xaga/mt6895 hardware through `kexec`. The current default path does
+not modify `/system`; Ubuntu and the lean runtime are stored on the dedicated
+`linux` partition, not on `/data`.
 
 ## Active Handoff
 
@@ -11,12 +12,14 @@ GKI ramdisk /init
   -> run ramdisk /kxshbin --prepare
       -> create early /dev/block nodes when needed
       -> mount the linux partition directly at /kexec
-      -> verify /kexec/busybox and /kexec/kxsh.sh
+      -> verify /kexec/lean/busybox and /kexec/lean/kxsh.sh
   -> FreeRamdisk()
       -> delete only files still on the old ramdisk st_dev
       -> leave /kexec alone because it is an ext4 mount
-  -> execve /kexec/busybox sh /kexec/kxsh.sh
+  -> execve /kexec/lean/busybox sh /kexec/lean/kxsh.sh
       -> start lean adbd, Dropbear, watchdog, optional Wi-Fi bring-up
+      -> or, if /kexec/lean/boot_ubuntu_rootfs.once exists,
+         switch_root to the Ubuntu rootfs at /kexec
 ```
 
 The linux partition is expected at `/dev/block/by-name/linux`; `/dev/block/sdc88`
@@ -25,26 +28,35 @@ When stock Android is running, scripts mount the same partition at
 `/mnt/linux_kexec` for installation and log collection. That stock-side mount
 point is not used by the lean runtime.
 
+The linux partition root is reserved for the Ubuntu rootfs. The lean rescue
+runtime lives under `/lean` on that partition, which appears as `/kexec/lean`
+after kexec.
+
 ## Current State
 
 - Lean ADB works. The lean serial is `0123456789abcdef`.
+- Direct-root Ubuntu handoff is implemented through
+  `/kexec/lean/boot_ubuntu_rootfs`; the Ubuntu ADB serial is
+  `ubuntu012345678`.
 - The GKI ramdisk embeds `/kxshbin`; no external `/mnt/kxshbinxxxx` handoff
   binary is required.
 - `prebuilt/init_first_stage_kxsh` is a rebuilt AOSP first-stage init. It runs
   `/kxshbin --prepare` before `DoFirstStageMount()`. If prepare succeeds, it
   skips Android first-stage mounts, frees the old ramdisk, and execs
-  `/kexec/busybox sh /kexec/kxsh.sh`. If prepare fails or `/kxshbin` is missing,
+  `/kexec/lean/busybox sh /kexec/lean/kxsh.sh`. If prepare fails or `/kxshbin` is missing,
   it falls back to normal `/system/bin/init selinux_setup`.
 - `kxshbin` is a small static ramdisk bootstrap built from `src/system_kxsh.c`.
-  `--prepare` mounts and verifies `/kexec`, then returns to init.
+  `--prepare` mounts `/kexec` and verifies `/kexec/lean`, then returns to init.
 - `scripts/host/install_linux_runtime.sh` installs runtime files into the linux
-  partition root. It uses `/data/local/tmp/linux_runtime_stage` only as a
+  partition's `/lean` directory. It uses `/data/local/tmp/linux_runtime_stage` only as a
   temporary stock Android transfer staging directory and removes it after copy.
 - `patched.dtb` carries the regulator always-on fix used by kexec tests.
-- Wi-Fi modules load from `/kexec/modules`; firmware is copied to
-  `/kexec/firmware`, and kexec cmdline sets `firmware_class.path=/kexec/firmware`.
-  Current testing reaches `phy0`; `/dev/wmtWifi` power-on returns EIO and needs
-  longer follow-up runs.
+- Wi-Fi modules load from `/kexec/lean/modules`; firmware is copied to
+  `/kexec/lean/firmware`, and kexec cmdline sets `firmware_class.path=/kexec/lean/firmware`.
+  Current direct-root testing skips Android `DoFirstStageMount()`, so real
+  `/vendor` and `/vendor_dlkm` are not mounted by Android first-stage init.
+  This differs from the older `/system/bin/init` handoff path where Wi-Fi once
+  worked after Android mounted vendor partitions.
 - Lean USB ADB may need a UDC replug after kexec. `src/kxsh.sh` records USB mode
   and state, writes the MTK controller mode node, binds `11201000.usb0`, and
   rebinds the UDC until the state becomes `configured`.
@@ -117,7 +129,7 @@ patches/aosp-init-kxsh-early-handoff.patch
 
 It applies to `sources/android-12.1`. The patch adds an early `/kxshbin
 --prepare` path before `DoFirstStageMount()`. On success, init frees the old
-ramdisk and execs `/kexec/busybox sh /kexec/kxsh.sh`; otherwise it continues to
+ramdisk and execs `/kexec/lean/busybox sh /kexec/lean/kxsh.sh`; otherwise it continues to
 the normal Android handoff.
 
 Prebuilt runtime-critical binaries:
@@ -149,6 +161,21 @@ aarch64-linux-gnu-gcc -static -Os -s -o work/output/ramdisk_kxshbin src/system_k
 ```
 
 ## Build
+
+Full rebuild from the connected stock Android device:
+
+```bash
+cd /home/in/work/kernels
+ADB=adb.exe STOCK_SERIAL=U89PBYJBFQKNLZEY RUN_MODE=lean MAX=4 \
+  bash scripts/host/full_rebuild_from_device.sh
+```
+
+This pulls `boot${slot}` and `vendor_boot${slot}` from the current slot, rebuilds
+the combined mbox initrd, installs the linux partition runtime, installs the
+kexec launcher payload, and runs the selected test. Use `RUN_MODE=ubuntu` to
+switch to the Ubuntu rootfs test, or `RUN_MODE=none` to stop after installation.
+Set `INSTALL_UBUNTU=1 ROOTFS_TAR=/path/to/ubuntu-rootfs.tar.gz` to reinstall
+the Ubuntu rootfs into the linux partition root during the same run.
 
 Extract the GKI and vendor ramdisks when inputs change:
 
@@ -187,6 +214,19 @@ bash scripts/host/build_patched_mbox_initrd.sh
 
 ## Install
 
+Install or refresh the Ubuntu rootfs:
+
+```bash
+cd /home/in/work/kernels
+ADB=adb.exe ROOTFS_TAR=ubuntu-rootfs.tar.gz \
+  bash scripts/host/install_ubuntu_rootfs.sh
+```
+
+This mounts the linux partition under stock Android at `/mnt/linux_kexec`,
+preserves `/mnt/linux_kexec/lean`, removes the old Ubuntu rootfs contents by
+default, and extracts the tarball into the partition root. Set `WIPE_UBUNTU=0`
+to overlay without deleting existing Ubuntu files.
+
 Install the linux partition runtime:
 
 ```bash
@@ -195,9 +235,9 @@ ADB=adb.exe bash scripts/host/install_linux_runtime.sh
 ```
 
 This mounts the linux partition under stock Android at `/mnt/linux_kexec`,
-pushes files through `/data/local/tmp/linux_runtime_stage`, copies them into the
-partition root, and removes the staging directory. At lean boot, the same
-partition is mounted at `/kexec`.
+pushes files through `/data/local/tmp/linux_runtime_stage`, copies lean runtime
+files into `/mnt/linux_kexec/lean`, and removes the staging directory. At kexec
+boot, the same partition is mounted at `/kexec`.
 
 Install the kexec payload:
 
@@ -232,6 +272,21 @@ Open a lean shell:
 adb.exe -s 0123456789abcdef shell
 ```
 
+Ubuntu direct-root boot:
+
+```bash
+cd /home/in/work/kernels
+ADB=adb.exe STOCK_SERIAL=U89PBYJBFQKNLZEY UBUNTU_WIFI=0 PANIC_AFTER=180 \
+  bash scripts/host/kexec_adb_until_ubuntu.sh \
+  work/output/combined_ramdisk_kexec_system_mbox.lz4 4
+```
+
+Success marker:
+
+```text
+*** UBUNTU ADB SHELL IS UP (serial ubuntu012345678) ***
+```
+
 Early-death retry policy:
 
 - retry only when the last valid pstore kernel log line contains
@@ -243,25 +298,28 @@ Early-death retry policy:
 From lean:
 
 ```text
-/kexec/kxsh.log
-/kexec/adbd.log
-/kexec/wifi_bringup.log
-/kexec/dropbear.log
+/kexec/lean/kxsh.log
+/kexec/lean/adbd.log
+/kexec/lean/wifi_bringup.log
+/kexec/lean/dropbear.log
+/kexec/lean/boot_ubuntu_rootfs.log
+/kexec/lean/ubuntu_phase_a.log
+/kexec/lean/adbd_ubuntu.log
 ```
 
 From stock Android after reboot:
 
 ```bash
-adb.exe shell "su -c 'mkdir -p /mnt/linux_kexec; mount | grep -q \" /mnt/linux_kexec \" || mount -t ext4 -o rw,noatime /dev/block/by-name/linux /mnt/linux_kexec 2>/dev/null || mount -t ext4 -o rw,noatime /dev/block/sdc88 /mnt/linux_kexec; ls -lh /mnt/linux_kexec; tail -120 /mnt/linux_kexec/kxsh.log'"
+adb.exe shell "su -c 'mkdir -p /mnt/linux_kexec; mount | grep -q \" /mnt/linux_kexec \" || mount -t ext4 -o rw,noatime /dev/block/by-name/linux /mnt/linux_kexec 2>/dev/null || mount -t ext4 -o rw,noatime /dev/block/sdc88 /mnt/linux_kexec; ls -lh /mnt/linux_kexec; tail -120 /mnt/linux_kexec/lean/kxsh.log'"
 ```
 
 Useful markers:
 
 ```text
 kexec-system-init: prepare linux runtime begin
-kexec-system-init: mounted linux runtime at /kexec
+kexec-system-init: mounted linux root at /kexec, lean runtime at /kexec/lean
 kexec-system-init: prepare linux runtime ok
-kexec-system-init: entered /kexec/kxsh.sh
+kexec-system-init: entered /kexec/lean/kxsh.sh
 kexec-system-init: adbd published FunctionFS endpoints
 kexec-system-init: host enumerated (udc state=configured
 kexec-system-init: starting dropbear on 0.0.0.0:22
@@ -273,14 +331,14 @@ Run from lean:
 
 ```bash
 adb.exe -s 0123456789abcdef shell \
-  'KEXEC_BASE=/kexec WIFI_POWER_WAIT_SECS=420 /kexec/busybox sh /kexec/wifi_bringup.sh'
+  'KEXEC_BASE=/kexec/lean WIFI_POWER_WAIT_SECS=420 /kexec/lean/busybox sh /kexec/lean/wifi_bringup.sh'
 ```
 
 Check progress:
 
 ```sh
-cat /kexec/wifi_load_progress.txt
-tail -220 /kexec/wifi_bringup.log
+cat /kexec/lean/wifi_load_progress.txt
+tail -220 /kexec/lean/wifi_bringup.log
 ls /sys/class/net
 ```
 
@@ -297,34 +355,15 @@ ap0
 Busybox DHCP is available from the lean runtime:
 
 ```sh
-/kexec/bin/udhcpc -i wlan0
+/kexec/lean/bin/udhcpc -i wlan0
 ```
-
-## Legacy Paths
-
-These scripts still describe or use the older `/system/bin/kxsh` and
-`/data/kexec` flow and are not part of the current default boot path:
-
-```text
-scripts/host/install_system_dropbear.sh
-scripts/host/install_adbd.sh
-scripts/host/install_ubuntu_ext4.sh
-scripts/host/enable_wifi_bringup_once.sh
-scripts/host/kexec_adb_until_ubuntu.sh
-scripts/host/ubuntu_docker_smoke.sh
-scripts/device/ubuntu_phase_a_init.sh
-scripts/device/enter_ubuntu.sh
-```
-
-Keep them as migration references until the Ubuntu/rootfs path is moved to the
-linux partition.
 
 ## Layout
 
 ```text
 src/                        static bootstrap, lean shell, watchdog, switch-root helpers
 scripts/host/               host-side build/install/boot/test helpers
-scripts/device/             device-side scripts installed into /kexec
+scripts/device/             device-side scripts installed into /kexec/lean
 scripts/lib/                shared host-side shell configuration
 patches/                    source patches kept outside repo-managed source trees
 prebuilt/                   init_first_stage_kxsh, adbd, busybox, Dropbear
@@ -336,11 +375,9 @@ old/                        archived boot images, old probes, experiments
 ## Remaining Work
 
 ```text
-migrate Ubuntu/rootfs scripts from /data/kexec to the linux partition
-add a switch_root-to-Ubuntu path while keeping lean ADB as rescue
 make kexec reach kxsh more consistently
+mount or recreate Android vendor/vendor_dlkm paths before Wi-Fi bring-up
 debug /dev/wmtWifi I/O error after Wi-Fi modules load and phy0 appears
 persist Wi-Fi connection workflow into a script after wlan0 appears
 validate Docker bridge/NAT and networked containers
-make slot handling automatic instead of assuming vendor_boot_a
 ```

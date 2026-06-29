@@ -1,12 +1,12 @@
 #!/bin/bash
 set -uo pipefail
 
-LOG=/data/kexec/ubuntu_phase_a.log
-WATCHDOG_PID=/data/kexec/run/watchdog_feeder.ubuntu.pid
-PANIC_TIMER_PID=/data/kexec/run/panic_timer.ubuntu.pid
-ADBD_LOG=/data/kexec/adbd_ubuntu.log
-WIFI_PID=/data/kexec/run/wifi_bringup.ubuntu.pid
-WIFI_FLAG=/data/kexec/ubuntu_wifi
+LOG=/lean/ubuntu_phase_a.log
+WATCHDOG_PID=/lean/run/watchdog_feeder.ubuntu.pid
+PANIC_TIMER_PID=/lean/run/panic_timer.ubuntu.pid
+ADBD_LOG=/lean/adbd_ubuntu.log
+WIFI_PID=/lean/run/wifi_bringup.ubuntu.pid
+WIFI_FLAG=/lean/ubuntu_wifi
 
 log()
 {
@@ -15,23 +15,23 @@ log()
 
 start_watchdog()
 {
-    mkdir -p /data/kexec/run
-    if [ -x /data/kexec/watchdog_feeder ]; then
-        /data/kexec/watchdog_feeder 5 &
+    mkdir -p /lean/run
+    if [ -x /lean/watchdog_feeder ]; then
+        /lean/watchdog_feeder 5 &
         echo "$!" > "$WATCHDOG_PID"
         log "watchdog feeder started pid=$!"
         return 0
     fi
 
-    log "missing /data/kexec/watchdog_feeder"
+    log "missing /lean/watchdog_feeder"
     return 1
 }
 
 start_panic_timer()
 {
     after=300
-    if [ -s /data/kexec/panic_after ]; then
-        after="$(cat /data/kexec/panic_after 2>/dev/null || echo 300)"
+    if [ -s /lean/panic_after ]; then
+        after="$(cat /lean/panic_after 2>/dev/null || echo 300)"
     fi
 
     case "$after" in
@@ -43,8 +43,8 @@ start_panic_timer()
 
     (
         log "panic timer armed: ${after}s"
-        if [ -x /data/kexec/busybox ]; then
-            /data/kexec/busybox sleep "$after"
+        if [ -x /lean/busybox ]; then
+            /lean/busybox sleep "$after"
         else
             sleep "$after"
         fi
@@ -94,16 +94,16 @@ start_adbd()
     mount_if_needed /dev/pts devpts devpts "mode=0620,ptmxmode=0666"
     mount_if_needed /config configfs configfs ""
 
-    mkdir -p /system/bin /dev/usb-ffs/adb /data/kexec/run
+    mkdir -p /system/bin /dev/usb-ffs/adb /lean/run
     ln -sf /bin/sh /system/bin/sh 2>/dev/null || true
-    ln -sf /data/kexec/linker64 /system/bin/linker64 2>/dev/null || true
+    ln -sf /lean/linker64 /system/bin/linker64 2>/dev/null || true
 
-    if [ ! -x /data/kexec/adbd ]; then
-        log "setup adbd: missing /data/kexec/adbd"
+    if [ ! -x /lean/adbd ]; then
+        log "setup adbd: missing /lean/adbd"
         return 1
     fi
-    if [ ! -x /data/kexec/linker64 ]; then
-        log "setup adbd: missing /data/kexec/linker64"
+    if [ ! -x /lean/linker64 ]; then
+        log "setup adbd: missing /lean/linker64"
     fi
 
     if [ -e /sys/fs/selinux/enforce ]; then
@@ -143,9 +143,9 @@ start_adbd()
     log_ls "adb FunctionFS before adbd" /dev/usb-ffs/adb
 
     : > "$ADBD_LOG"
-    LD_LIBRARY_PATH=/data/kexec/adblib /data/kexec/adbd >> "$ADBD_LOG" 2>&1 &
+    LD_LIBRARY_PATH=/lean/adblib /lean/adbd >> "$ADBD_LOG" 2>&1 &
     adbd_pid=$!
-    echo "$adbd_pid" > /data/kexec/run/adbd.ubuntu.pid
+    echo "$adbd_pid" > /lean/run/adbd.ubuntu.pid
     log "setup adbd: started pid=$adbd_pid"
 
     ready=0
@@ -200,13 +200,13 @@ start_wifi()
             ;;
     esac
 
-    if [ ! -x /data/kexec/wifi_bringup.sh ]; then
-        log "wifi requested but /data/kexec/wifi_bringup.sh is missing"
+    if [ ! -x /lean/wifi_bringup.sh ]; then
+        log "wifi requested but /lean/wifi_bringup.sh is missing"
         return 1
     fi
 
     log "wifi bringup starting"
-    /data/kexec/wifi_bringup.sh &
+    /lean/wifi_bringup.sh &
     echo "$!" > "$WIFI_PID"
     log "wifi bringup started pid=$!"
 }
@@ -229,7 +229,6 @@ start_wifi
     findmnt /sys/fs/cgroup 2>/dev/null || true
     stat -f -c 'cgroup fs type: %T' /sys/fs/cgroup 2>/dev/null || true
     echo "--- data ---"
-    ls -lh /data/kexec/ubuntu.ext4 /data/kexec/boot_ubuntu_ext4 2>/dev/null || true
     df -h / /data 2>/dev/null || true
     echo "--- watchdog ---"
     cat "$WATCHDOG_PID" 2>/dev/null || true
@@ -237,14 +236,14 @@ start_wifi
     echo "--- panic timer ---"
     cat "$PANIC_TIMER_PID" 2>/dev/null || true
     echo "--- adbd ---"
-    cat /data/kexec/run/adbd.ubuntu.pid 2>/dev/null || true
+    cat /lean/run/adbd.ubuntu.pid 2>/dev/null || true
     ps -ef 2>/dev/null | grep '[a]dbd' || true
     tail -80 "$ADBD_LOG" 2>/dev/null || true
     echo "--- wifi ---"
     cat "$WIFI_PID" 2>/dev/null || true
     ps -ef 2>/dev/null | grep '[w]ifi_bringup' || true
-    ls -l /data/kexec/modules 2>/dev/null | sed -n '1,80p' || true
-    tail -120 /data/kexec/wifi_bringup.log 2>/dev/null || true
+    ls -l /lean/modules 2>/dev/null | sed -n '1,80p' || true
+    tail -120 /lean/wifi_bringup.log 2>/dev/null || true
     echo "--- docker dir ---"
     ls -ld /var/lib/docker 2>/dev/null || true
     echo "===== ubuntu phase A end $(date -u 2>/dev/null || true) ====="
@@ -253,8 +252,8 @@ start_wifi
 sync
 log "ready; waiting for adb shell or panic timer"
 while true; do
-    if [ -x /data/kexec/busybox ]; then
-        /data/kexec/busybox sleep 60
+    if [ -x /lean/busybox ]; then
+        /lean/busybox sleep 60
     else
         sleep 60
     fi
