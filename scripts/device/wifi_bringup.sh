@@ -43,7 +43,7 @@ log_step()
 setup_firmware_path()
 {
     if [ -d "$FIRMWARE_DIR" ] && [ -w /sys/module/firmware_class/parameters/path ]; then
-        echo "$FIRMWARE_DIR" > /sys/module/firmware_class/parameters/path 2>/dev/null || true
+        printf '%s' "$FIRMWARE_DIR" > /sys/module/firmware_class/parameters/path 2>/dev/null || true
     fi
 
     if [ -r /sys/module/firmware_class/parameters/path ]; then
