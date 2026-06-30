@@ -5,6 +5,8 @@ LOG=/lean/ubuntu_phase_a.log
 WATCHDOG_PID=/lean/run/watchdog_feeder.ubuntu.pid
 PANIC_TIMER_PID=/lean/run/panic_timer.ubuntu.pid
 ADBD_LOG=/lean/adbd_ubuntu.log
+USB_ADBD_SAMPLER_LOG=/lean/usb_adbd_sampler.log
+USB_ADBD_SAMPLER_PID=/lean/run/usb_adbd_sampler.pid
 WIFI_PID=/lean/run/wifi_bringup.ubuntu.pid
 WIFI_FLAG=/lean/ubuntu_wifi
 
@@ -82,6 +84,81 @@ mount_if_needed()
     else
         mount -t "$type" "$src" "$mp" 2>/dev/null
     fi
+}
+
+resolve_dm_by_name()
+{
+    name="$1"
+
+    for n in /sys/block/dm-*; do
+        [ -e "$n/dm/name" ] || continue
+        if [ "$(cat "$n/dm/name" 2>/dev/null)" = "$name" ]; then
+            echo "/dev/block/${n##*/}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+ensure_dm_node()
+{
+    node="$1"
+    base="${node##*/}"
+    devno="$(cat "/sys/block/$base/dev" 2>/dev/null || true)"
+    [ -n "$devno" ] || return 1
+    maj="${devno%:*}"
+    min="${devno#*:}"
+    mkdir -p /dev/block /dev/mapper
+    [ -b "$node" ] || mknod "$node" b "$maj" "$min" 2>/dev/null || true
+}
+
+mount_one_vendor_path()
+{
+    part="$1"
+    mp="$2"
+    dev="$(resolve_dm_by_name "$part" 2>/dev/null || true)"
+    [ -n "$dev" ] || return 1
+    ensure_dm_node "$dev" || true
+    mkdir -p "$mp"
+    grep -q " $mp " /proc/mounts 2>/dev/null && return 0
+    mount -t erofs -o ro "$dev" "$mp" 2>/dev/null ||
+        mount -o ro "$dev" "$mp" 2>/dev/null
+}
+
+ensure_vendor_mounts()
+{
+    mount_if_needed /proc proc proc ""
+    mount_if_needed /sys sysfs sysfs ""
+    mount_if_needed /dev devtmpfs devtmpfs "mode=0755"
+
+    slot="_a"
+    if [ -r /proc/cmdline ]; then
+        slot="$(sed -n 's/.*androidboot.slot_suffix=\([^ ]*\).*/\1/p' /proc/cmdline | head -n 1)"
+        [ -n "$slot" ] || slot="_a"
+    fi
+
+    log "vendor mount: begin slot=$slot"
+    if [ -x /lean/map_super_partitions.py ]; then
+        if ! resolve_dm_by_name "vendor${slot}" >/dev/null 2>&1 ||
+           ! resolve_dm_by_name "vendor_dlkm${slot}" >/dev/null 2>&1; then
+            /lean/map_super_partitions.py --slot "$slot" \
+                --partition "vendor${slot}" \
+                --partition "vendor_dlkm${slot}" >> "$LOG" 2>&1 || \
+                log "vendor mount: map_super_partitions.py failed"
+        fi
+    else
+        log "vendor mount: missing /lean/map_super_partitions.py"
+    fi
+
+    mount_one_vendor_path "vendor${slot}" /vendor || true
+    mount_one_vendor_path "vendor_dlkm${slot}" /vendor_dlkm || true
+
+    {
+        echo "--- vendor mounts ---"
+        grep -E ' /(vendor|vendor_dlkm) ' /proc/mounts 2>/dev/null || true
+        echo "--- vendor paths ---"
+        ls -la /vendor/firmware /vendor/etc/firmware /vendor/lib/modules /vendor_dlkm/lib/modules 2>&1 | sed -n '1,160p'
+    } >> "$LOG" 2>&1
 }
 
 start_adbd()
@@ -186,6 +263,37 @@ start_adbd()
     return 1
 }
 
+start_usb_adbd_sampler()
+{
+    interval="${USB_ADBD_SAMPLE_INTERVAL:-1}"
+    case "$interval" in ''|*[!0-9]*|0) interval=1 ;; esac
+
+    (
+        : > "$USB_ADBD_SAMPLER_LOG"
+        while true; do
+            {
+                echo "===== usb/adbd sample $(date -u 2>/dev/null || true) ====="
+                echo "--- processes ---"
+                ps -ef 2>/dev/null | grep -E 'adbd|phase_a' | grep -v grep || true
+                echo "--- udc ---"
+                for u in /sys/class/udc/*; do
+                    [ -e "$u" ] || continue
+                    echo "udc=${u##*/} state=$(cat "$u/state" 2>/dev/null || true)"
+                done
+                echo "--- gadget ---"
+                g=/config/usb_gadget/g1
+                [ -e "$g/UDC" ] && echo "g1 UDC=$(cat "$g/UDC" 2>/dev/null || true)"
+                ls -la /dev/usb-ffs/adb 2>&1 || true
+                echo "--- adbd log tail ---"
+                tail -30 "$ADBD_LOG" 2>/dev/null || true
+            } >> "$USB_ADBD_SAMPLER_LOG" 2>&1
+            sleep "$interval"
+        done
+    ) &
+    echo "$!" > "$USB_ADBD_SAMPLER_PID"
+    log "usb/adbd sampler started pid=$! interval=${interval}s"
+}
+
 start_wifi()
 {
     wifi="${UBUNTU_WIFI:-1}"
@@ -206,14 +314,16 @@ start_wifi()
     fi
 
     log "wifi bringup starting"
-    /lean/wifi_bringup.sh &
+    KEXEC_BASE=/lean /lean/busybox sh /lean/wifi_bringup.sh &
     echo "$!" > "$WIFI_PID"
     log "wifi bringup started pid=$!"
 }
 
 start_watchdog
 start_panic_timer
+ensure_vendor_mounts
 start_adbd
+start_usb_adbd_sampler
 start_wifi
 
 {
@@ -239,6 +349,9 @@ start_wifi
     cat /lean/run/adbd.ubuntu.pid 2>/dev/null || true
     ps -ef 2>/dev/null | grep '[a]dbd' || true
     tail -80 "$ADBD_LOG" 2>/dev/null || true
+    echo "--- usb/adbd sampler ---"
+    cat "$USB_ADBD_SAMPLER_PID" 2>/dev/null || true
+    tail -80 "$USB_ADBD_SAMPLER_LOG" 2>/dev/null || true
     echo "--- wifi ---"
     cat "$WIFI_PID" 2>/dev/null || true
     ps -ef 2>/dev/null | grep '[w]ifi_bringup' || true

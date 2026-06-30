@@ -109,7 +109,7 @@ build_cmdline() {
     [ -n "$slot_suffix" ] || slot_suffix="_a"
     bootconfig_args="$($ADB shell "su -c 'cat /proc/bootconfig 2>/dev/null'" | tr -d '\r' | awk '
       /^androidboot[.]/ { key=$1; sub(/^[^=]*=[[:space:]]*/, ""); gsub(/["[:space:]]/, ""); print key "=" $0 }' | tr '\n' ' ')"
-    normal_args="$bootconfig_args androidboot.force_normal_boot=1 androidboot.mode=normal androidboot.bootmode=normal androidboot.slot_suffix=$slot_suffix androidboot.hardware=mt6895 androidboot.init_fatal_panic=true androidboot.init_fatal_reboot_target=bootloader firmware_class.path=/kexec/lean/firmware loglevel=7 ignore_loglevel printk.devkmsg=on"
+    normal_args="$bootconfig_args androidboot.force_normal_boot=1 androidboot.mode=normal androidboot.bootmode=normal androidboot.slot_suffix=$slot_suffix androidboot.hardware=mt6895 androidboot.init_fatal_panic=true androidboot.init_fatal_reboot_target=bootloader firmware_class.path=/vendor/firmware loglevel=7 ignore_loglevel printk.devkmsg=on"
     printf '%s\n' "$base_cmdline $normal_args"
 }
 

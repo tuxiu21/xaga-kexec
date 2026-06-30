@@ -11,7 +11,7 @@ DTB_DEV="${DTB_DEV:-patched.dtb}"
 MAX="${2:-8}"
 UBUNTU_SERIAL="${UBUNTU_SERIAL:-ubuntu012345678}"
 LEAN_SERIAL="${LEAN_SERIAL:-0123456789abcdef}"
-PANIC_AFTER="${PANIC_AFTER:-180}"
+PANIC_AFTER="${PANIC_AFTER:-900}"
 UBUNTU_WIFI="${UBUNTU_WIFI:-1}"
 UBUNTU_WIFI_WAIT="${UBUNTU_WIFI_WAIT:-260}"
 NOEXEC_MAX="${NOEXEC_MAX:-3}"
@@ -59,6 +59,7 @@ pull_from_stock() {
     adb_root_shell "cat $LEAN_DIR/boot_ubuntu_rootfs.log 2>/dev/null" > "$OUT/round_${r}_boot_ubuntu_rootfs.log" 2>/dev/null
     adb_root_shell "cat $LEAN_DIR/ubuntu_phase_a.log 2>/dev/null" > "$OUT/round_${r}_ubuntu_phase_a.log" 2>/dev/null
     adb_root_shell "cat $LEAN_DIR/adbd_ubuntu.log 2>/dev/null" > "$OUT/round_${r}_adbd_ubuntu.log" 2>/dev/null
+    adb_root_shell "cat $LEAN_DIR/usb_adbd_sampler.log 2>/dev/null" > "$OUT/round_${r}_usb_adbd_sampler.log" 2>/dev/null
     adb_root_shell "cat $LEAN_DIR/wifi_bringup.log 2>/dev/null" > "$OUT/round_${r}_wifi_bringup.log" 2>/dev/null
     adb_root_shell "cat $LEAN_DIR/wifi_load_progress.txt 2>/dev/null" > "$OUT/round_${r}_wifi_load_progress.txt" 2>/dev/null
     adb_root_shell "cat $LEAN_DIR/dmesg_wifi_before.log 2>/dev/null" > "$OUT/round_${r}_dmesg_wifi_before.log" 2>/dev/null
@@ -71,6 +72,7 @@ pull_from_ubuntu() {
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/boot_ubuntu_rootfs.log 2>/dev/null' > "$OUT/round_${r}_boot_ubuntu_rootfs.log" 2>/dev/null
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/ubuntu_phase_a.log 2>/dev/null' > "$OUT/round_${r}_ubuntu_phase_a.log" 2>/dev/null
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/adbd_ubuntu.log 2>/dev/null' > "$OUT/round_${r}_adbd_ubuntu.log" 2>/dev/null
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/usb_adbd_sampler.log 2>/dev/null' > "$OUT/round_${r}_usb_adbd_sampler.log" 2>/dev/null
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/wifi_bringup.log 2>/dev/null' > "$OUT/round_${r}_wifi_bringup.log" 2>/dev/null
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/wifi_load_progress.txt 2>/dev/null' > "$OUT/round_${r}_wifi_load_progress.txt" 2>/dev/null
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/dmesg_wifi_before.log 2>/dev/null' > "$OUT/round_${r}_dmesg_wifi_before.log" 2>/dev/null
@@ -179,7 +181,7 @@ build_cmdline() {
     [ -n "$slot_suffix" ] || slot_suffix="_a"
     bootconfig_args="$($ADB shell "su -c 'cat /proc/bootconfig 2>/dev/null'" | tr -d '\r' | awk '
       /^androidboot[.]/ { key=$1; sub(/^[^=]*=[[:space:]]*/, ""); gsub(/["[:space:]]/, ""); print key "=" $0 }' | tr '\n' ' ')"
-    normal_args="$bootconfig_args androidboot.force_normal_boot=1 androidboot.mode=normal androidboot.bootmode=normal androidboot.slot_suffix=$slot_suffix androidboot.hardware=mt6895 androidboot.init_fatal_panic=true androidboot.init_fatal_reboot_target=bootloader firmware_class.path=/kexec/lean/firmware loglevel=7 ignore_loglevel printk.devkmsg=on"
+    normal_args="$bootconfig_args androidboot.force_normal_boot=1 androidboot.mode=normal androidboot.bootmode=normal androidboot.slot_suffix=$slot_suffix androidboot.hardware=mt6895 androidboot.init_fatal_panic=true androidboot.init_fatal_reboot_target=bootloader firmware_class.path=/vendor/firmware loglevel=7 ignore_loglevel printk.devkmsg=on"
     printf '%s\n' "$base_cmdline $normal_args"
 }
 
@@ -195,6 +197,8 @@ print_ubuntu_logs() {
     cat "$OUT/round_${r}_ubuntu_phase_a.log" 2>/dev/null
     echo "===== adbd_ubuntu.log ====="
     cat "$OUT/round_${r}_adbd_ubuntu.log" 2>/dev/null
+    echo "===== usb_adbd_sampler.log ====="
+    cat "$OUT/round_${r}_usb_adbd_sampler.log" 2>/dev/null
     echo "===== wifi_bringup.log ====="
     cat "$OUT/round_${r}_wifi_bringup.log" 2>/dev/null
     echo "===== wifi_load_progress.txt ====="
@@ -225,7 +229,7 @@ for r in $(seq 1 "$MAX"); do
     wait_stock_ready || say "round $r: boot_completed not seen, continuing"
 
     say "round $r: clearing pstore + Ubuntu logs, panic_after=${PANIC_AFTER}s wifi=${UBUNTU_WIFI}"
-    adb_root_shell "mkdir -p $LINUX_MOUNT; grep -q \" $LINUX_MOUNT \" /proc/mounts || mount -t ext4 -o rw,noatime $LINUX_DEV $LINUX_MOUNT 2>/dev/null || mount -t ext4 -o rw,noatime $LINUX_DEV_FALLBACK $LINUX_MOUNT; mkdir -p $LEAN_DIR/run; rm -f /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-*; : > $LEAN_DIR/kxsh.log; : > $LEAN_DIR/adbd.log; : > $LEAN_DIR/boot_ubuntu_rootfs.log; : > $LEAN_DIR/ubuntu_phase_a.log; : > $LEAN_DIR/adbd_ubuntu.log; : > $LEAN_DIR/wifi_bringup.log; : > $LEAN_DIR/wifi_load_progress.txt; : > $LEAN_DIR/dmesg_wifi_before.log; : > $LEAN_DIR/dmesg_wifi_after.log; rm -f $LEAN_DIR/run/adbd.ubuntu.pid $LEAN_DIR/run/panic_timer.ubuntu.pid $LEAN_DIR/run/wifi_bringup.ubuntu.pid; echo $PANIC_AFTER > $LEAN_DIR/panic_after; echo $UBUNTU_WIFI > $LEAN_DIR/ubuntu_wifi; touch $LEAN_DIR/boot_ubuntu_rootfs.once; sync" >/dev/null 2>&1
+    adb_root_shell "mkdir -p $LINUX_MOUNT; grep -q \" $LINUX_MOUNT \" /proc/mounts || mount -t ext4 -o rw,noatime $LINUX_DEV $LINUX_MOUNT 2>/dev/null || mount -t ext4 -o rw,noatime $LINUX_DEV_FALLBACK $LINUX_MOUNT; mkdir -p $LEAN_DIR/run; rm -f /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-*; : > $LEAN_DIR/kxsh.log; : > $LEAN_DIR/adbd.log; : > $LEAN_DIR/boot_ubuntu_rootfs.log; : > $LEAN_DIR/ubuntu_phase_a.log; : > $LEAN_DIR/adbd_ubuntu.log; : > $LEAN_DIR/usb_adbd_sampler.log; : > $LEAN_DIR/wifi_bringup.log; : > $LEAN_DIR/wifi_load_progress.txt; : > $LEAN_DIR/dmesg_wifi_before.log; : > $LEAN_DIR/dmesg_wifi_after.log; rm -f $LEAN_DIR/run/adbd.ubuntu.pid $LEAN_DIR/run/usb_adbd_sampler.pid $LEAN_DIR/run/panic_timer.ubuntu.pid $LEAN_DIR/run/wifi_bringup.ubuntu.pid; echo $PANIC_AFTER > $LEAN_DIR/panic_after; echo $UBUNTU_WIFI > $LEAN_DIR/ubuntu_wifi; touch $LEAN_DIR/boot_ubuntu_rootfs.once; sync" >/dev/null 2>&1
 
     cmdline="$(build_cmdline)"
     printf '%s\n' "$cmdline" > "$OUT/round_${r}_cmdline.txt"

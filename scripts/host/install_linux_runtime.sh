@@ -93,15 +93,16 @@ cp "$OUTPUT_DIR/boot_ubuntu_rootfs" "$tmp/push/boot_ubuntu_rootfs"
 cp "$ROOT/src/kxsh.sh" "$tmp/push/kxsh.sh"
 cp "$ROOT/scripts/device/ubuntu_phase_a_init.sh" "$tmp/push/ubuntu_phase_a_init.sh"
 cp "$ROOT/scripts/device/wifi_bringup.sh" "$tmp/push/wifi_bringup.sh"
+cp "$ROOT/scripts/device/map_super_partitions.py" "$tmp/push/map_super_partitions.py"
 cp "$ROOT/scripts/device/enter_ubuntu.sh" "$tmp/push/enter-ubuntu.sh"
 
 chmod 0755 "$tmp/push"/adbd "$tmp/push"/busybox "$tmp/push"/dropbear \
   "$tmp/push"/dropbearkey "$tmp/push"/watchdog_feeder \
-  "$tmp/push"/boot_ubuntu_rootfs "$tmp/push"/*.sh "$tmp/push/linker64"
+  "$tmp/push"/boot_ubuntu_rootfs "$tmp/push"/*.sh \
+  "$tmp/push"/map_super_partitions.py "$tmp/push/linker64"
 chmod 0644 "$tmp/push"/adblib/*.so
 
 wifi_modules="mtk-mbox mtk_rpmsg_mbox mtk_tinysys_ipi mtk-ssc connadp mcupm gpueb fhctl mtk-afe-external scp connscp mtk_low_battery_throttling mtk_dynamic_loading_throttling mtk_mdpm mtk_pbm ccci_util_lib ccci_auxadc rps_perf ccmni ccci_md_all conninfra connfem wmt_chrdev_wifi_connac2 mddp wlan_drv_gen4m_6895"
-wifi_firmware_patterns="WIFI_RAM_CODE_soc7_0* soc7_0_ram_wmmcu* conninfra.cfg wifi.cfg wifi_sigma.cfg txpowerctrl.cfg"
 
 adb_root_shell "
   set -e
@@ -134,7 +135,7 @@ adb_root_shell "
   chmod 600 \"$LINUX_RUNTIME/root/.ssh/authorized_keys\" \"$LINUX_RUNTIME/shadow\" 2>/dev/null || true
   chmod 644 \"$LINUX_RUNTIME/passwd\" \"$LINUX_RUNTIME/group\"
   chmod 0755 \"$LINUX_RUNTIME\"
-  chmod 0755 \"$LINUX_RUNTIME\"/busybox \"$LINUX_RUNTIME\"/dropbear \"$LINUX_RUNTIME\"/dropbearkey \"$LINUX_RUNTIME\"/watchdog_feeder \"$LINUX_RUNTIME\"/boot_ubuntu_rootfs \"$LINUX_RUNTIME\"/kxsh.sh \"$LINUX_RUNTIME\"/ubuntu_phase_a_init.sh \"$LINUX_RUNTIME\"/wifi_bringup.sh \"$LINUX_RUNTIME\"/enter-ubuntu.sh \"$LINUX_RUNTIME\"/linker64 \"$LINUX_RUNTIME\"/adbd 2>/dev/null || true
+  chmod 0755 \"$LINUX_RUNTIME\"/busybox \"$LINUX_RUNTIME\"/dropbear \"$LINUX_RUNTIME\"/dropbearkey \"$LINUX_RUNTIME\"/watchdog_feeder \"$LINUX_RUNTIME\"/boot_ubuntu_rootfs \"$LINUX_RUNTIME\"/kxsh.sh \"$LINUX_RUNTIME\"/ubuntu_phase_a_init.sh \"$LINUX_RUNTIME\"/wifi_bringup.sh \"$LINUX_RUNTIME\"/map_super_partitions.py \"$LINUX_RUNTIME\"/enter-ubuntu.sh \"$LINUX_RUNTIME\"/linker64 \"$LINUX_RUNTIME\"/adbd 2>/dev/null || true
   chmod 0644 \"$LINUX_RUNTIME\"/adblib/*.so 2>/dev/null || true
   rm -rf \"$LINUX_RUNTIME/modules\"
   mkdir -p \"$LINUX_RUNTIME/modules\"
@@ -145,17 +146,7 @@ adb_root_shell "
   done
   chmod 0644 \"$LINUX_RUNTIME/modules\"/*.ko 2>/dev/null || true
   rm -rf \"$LINUX_RUNTIME/firmware\"
-  mkdir -p \"$LINUX_RUNTIME/firmware\"
-  for pattern in $wifi_firmware_patterns; do
-    for d in /vendor/firmware /vendor/etc/firmware; do
-      for fw in \"\$d\"/\$pattern; do
-        [ -f \"\$fw\" ] && cp \"\$fw\" \"$LINUX_RUNTIME/firmware/\"
-      done
-    done
-  done
-  chmod 0644 \"$LINUX_RUNTIME/firmware\"/* 2>/dev/null || true
-  echo 180 > \"$LINUX_RUNTIME/panic_after\"
+  echo 900 > \"$LINUX_RUNTIME/panic_after\"
   sync
   ls -l \"$LINUX_RUNTIME\" | sed -n \"1,120p\"
-  ls -l \"$LINUX_RUNTIME/firmware\" | sed -n \"1,80p\"
 "

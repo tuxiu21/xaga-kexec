@@ -4,7 +4,7 @@
 # Requirements:
 # - patched mtk-mbox.ko in the initrd, otherwise SCP mailbox bring-up can BUG
 #   or spin on unmatched recv IRQ bits after kexec.
-# - $KEXEC_BASE/modules populated by the host installer.
+# - /vendor_dlkm and /vendor are mounted before loading Wi-Fi modules.
 # - $KEXEC_BASE/busybox available.
 #
 # Output:
@@ -20,10 +20,10 @@ LOG="$BASE/wifi_bringup.log"
 PROG="$BASE/wifi_load_progress.txt"
 DMESG_BEFORE="$BASE/dmesg_wifi_before.log"
 DMESG_AFTER="$BASE/dmesg_wifi_after.log"
-FIRMWARE_DIR="${WIFI_FIRMWARE_DIR:-$BASE/firmware}"
+FIRMWARE_DIR="${WIFI_FIRMWARE_DIR:-/vendor/firmware}"
 POWER_WAIT_SECS="${WIFI_POWER_WAIT_SECS:-240}"
 POLL_SECS=5
-DIRS="$BASE/modules /vendor_dlkm/lib/modules /vendor/lib/modules"
+DIRS="/vendor_dlkm/lib/modules /vendor/lib/modules"
 
 MODULE_ORDER="mtk-mbox mtk_rpmsg_mbox mtk_tinysys_ipi mtk-ssc
 connadp
@@ -51,7 +51,40 @@ setup_firmware_path()
     else
         echo "## firmware path: unreadable"
     fi
+    if [ -d "$FIRMWARE_DIR" ]; then
+        echo "## firmware dir: $FIRMWARE_DIR"
+    else
+        echo "!! firmware dir missing: $FIRMWARE_DIR"
+    fi
     "$BB" ls -lh "$FIRMWARE_DIR" 2>&1 | "$BB" sed -n '1,120p'
+}
+
+ensure_vendor_mounts()
+{
+    if [ -d /vendor/firmware ] && [ -d /vendor_dlkm/lib/modules ]; then
+        return 0
+    fi
+
+    slot="_a"
+    if [ -r /proc/cmdline ]; then
+        slot="$("$BB" sed -n 's/.*androidboot.slot_suffix=\([^ ]*\).*/\1/p' /proc/cmdline | "$BB" head -n 1)"
+        [ -n "$slot" ] || slot="_a"
+    fi
+
+    echo "## vendor paths missing; trying map_super_partitions.py --mount slot=$slot"
+    if [ -x "$BASE/map_super_partitions.py" ]; then
+        "$BASE/map_super_partitions.py" --slot "$slot" \
+            --partition "vendor${slot}" \
+            --partition "vendor_dlkm${slot}" \
+            --mount 2>&1 || true
+    else
+        echo "!! missing $BASE/map_super_partitions.py"
+    fi
+
+    if [ ! -d /vendor/firmware ] || [ ! -d /vendor_dlkm/lib/modules ]; then
+        echo "!! /vendor/firmware: $( [ -d /vendor/firmware ] && echo ok || echo missing )"
+        echo "!! /vendor_dlkm/lib/modules: $( [ -d /vendor_dlkm/lib/modules ] && echo ok || echo missing )"
+    fi
 }
 
 load_module()
@@ -74,10 +107,11 @@ load_module()
     fi
 
     log_step "$ko"
+    echo "  insmod $ko from $path"
     out="$("$BB" insmod "$path" 2>&1)"
     rc=$?
     if [ "$rc" = 0 ]; then
-        echo "  ok    $ko"
+        echo "  ok    $ko from $path"
     else
         echo "  rc=$rc $ko : $out"
     fi
@@ -155,6 +189,8 @@ wait_for_wifi_ready()
     : > "$DMESG_BEFORE"
     : > "$DMESG_AFTER"
 
+    echo "## module search dirs: $DIRS"
+    ensure_vendor_mounts
     setup_firmware_path
 
     for ko in $MODULE_ORDER; do
