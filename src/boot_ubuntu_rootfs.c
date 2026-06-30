@@ -20,6 +20,8 @@
 #define LOG_FILE LEAN "/boot_ubuntu_rootfs.log"
 #define INIT_SRC LEAN "/ubuntu_phase_a_init.sh"
 #define SWITCH_INIT "/phase_a_init"
+#define SYSTEMD_FLAG LEAN "/boot_systemd.once"
+#define SYSTEMD_INIT "/sbin/init"
 
 static void mkdir_p(const char *path, mode_t mode)
 {
@@ -230,7 +232,10 @@ static void clean_lean_processes(void)
 int main(void)
 {
     char new_init[256];
-    char *argv[] = { SWITCH_INIT, NULL };
+    const char *init_path = SWITCH_INIT;
+    char *phase_a_argv[] = { SWITCH_INIT, NULL };
+    char *systemd_argv[] = { SYSTEMD_INIT, NULL };
+    char **argv = phase_a_argv;
     char *envp[] = {
         "HOME=/root",
         "TERM=linux",
@@ -251,6 +256,14 @@ int main(void)
         die("missing Ubuntu os-release errno=%d", errno);
     if (access(INIT_SRC, X_OK) != 0)
         die("missing init %s errno=%d", INIT_SRC, errno);
+    if (access(SYSTEMD_FLAG, F_OK) == 0) {
+        if (access(NEWROOT SYSTEMD_INIT, X_OK) != 0)
+            die("systemd flag present but missing " SYSTEMD_INIT " errno=%d", errno);
+        init_path = SYSTEMD_INIT;
+        argv = systemd_argv;
+        logmsg("systemd boot flag present; will exec " SYSTEMD_INIT);
+        unlink(SYSTEMD_FLAG);
+    }
 
     mkdir_p(NEWROOT "/proc", 0755);
     mkdir_p(NEWROOT "/sys", 0755);
@@ -287,6 +300,6 @@ int main(void)
     if (chdir("/") != 0)
         die("chdir / failed errno=%d", errno);
 
-    execve(SWITCH_INIT, argv, envp);
-    die("exec %s failed errno=%d", SWITCH_INIT, errno);
+    execve(init_path, argv, envp);
+    die("exec %s failed errno=%d", init_path, errno);
 }

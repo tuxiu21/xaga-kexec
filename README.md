@@ -55,15 +55,19 @@ after kexec.
   `mm_infra` power domain on through genpd/runtime PM. This avoids the first
   kexec boot entering the new kernel with `mm_infra` off and hanging when
   `mtk-scpsys-mt6895` first touches `mminfra_config`.
-- Wi-Fi modules load from `/kexec/lean/modules`; firmware is copied to
-  `/kexec/lean/firmware`, and kexec cmdline sets `firmware_class.path=/kexec/lean/firmware`.
-  Current direct-root testing skips Android `DoFirstStageMount()`, so real
-  `/vendor` and `/vendor_dlkm` are not mounted by Android first-stage init.
-  This differs from the older `/system/bin/init` handoff path where Wi-Fi once
-  worked after Android mounted vendor partitions.
+- Wi-Fi module bring-up now recreates the needed Android dynamic partition
+  mappings from the lean/Ubuntu runtime, mounts `/vendor` and `/vendor_dlkm`,
+  and loads modules from those mounted paths. The kexec cmdline keeps
+  `firmware_class.path=/vendor/firmware`; `build_patched_mbox_initrd.sh` can
+  optionally embed early firmware under `/vendor/firmware` in the GKI ramdisk
+  by setting `WIFI_FIRMWARE_DIR`.
 - Lean USB ADB may need a UDC replug after kexec. `src/kxsh.sh` records USB mode
   and state, writes the MTK controller mode node, binds `11201000.usb0`, and
   rebinds the UDC until the state becomes `configured`.
+- Ubuntu direct-root starts `/lean/ubuntu_phase_a_init.sh` as PID 1 through
+  `/phase_a_init` by default. For one-shot systemd tests, create
+  `/kexec/lean/boot_systemd.once` before booting Ubuntu; `boot_ubuntu_rootfs`
+  removes the flag and execs `/sbin/init` instead.
 
 ## Safety Notes
 
@@ -253,6 +257,55 @@ This pushes the kernel image, `kexec`, the selected combined ramdisk, and
 `patched.dtb` to `/data/local/tmp`. This use of `/data/local/tmp` is only the
 stock Android kexec launcher staging area.
 
+## Ubuntu Rootfs Notes
+
+The direct-root Ubuntu path is intentionally minimal. `src/boot_ubuntu_rootfs.c`
+moves the existing `/proc`, `/sys`, `/dev`, `/config`, and cgroup mounts into
+the Ubuntu rootfs, then execs `/phase_a_init`, which is copied from
+`/lean/ubuntu_phase_a_init.sh` immediately before switch-root.
+
+`/lean/ubuntu_phase_a_init.sh` starts:
+
+```text
+watchdog feeder
+panic timer
+vendor/vendor_dlkm mapping and mounts
+Ubuntu USB ADB
+USB/adbd sampler
+optional Wi-Fi module bring-up
+```
+
+For package maintenance in this kexec rootfs, keep the Ubuntu kernel packages
+held unless you are deliberately testing Ubuntu-packaged kernels:
+
+```sh
+apt-mark hold linux-generic linux-headers-generic linux-image-generic
+```
+
+`flash-kernel` should also be disabled for this rootfs because boot images are
+managed by the Android/kexec payload, not by Ubuntu:
+
+```sh
+mkdir -p /etc/flash-kernel
+printf 'none\n' > /etc/flash-kernel/machine
+```
+
+When using host-side proxying for package operations, set up ADB reverse and
+make sure loopback is up in Ubuntu:
+
+```sh
+adb.exe -s ubuntu012345678 reverse tcp:7890 tcp:7890
+adb.exe -s ubuntu012345678 shell 'ip link set lo up'
+```
+
+Then run apt with explicit proxy variables, for example:
+
+```sh
+http_proxy=http://127.0.0.1:7890 \
+https_proxy=http://127.0.0.1:7890 \
+apt-get update
+```
+
 ## Boot And Test
 
 ### MT6895 pre-kexec mm_infra cleanup
@@ -359,11 +412,37 @@ kexec-system-init: starting dropbear on 0.0.0.0:22
 
 ## Wi-Fi
 
-Run from lean:
+Module and firmware bring-up is handled by `scripts/device/wifi_bringup.sh`.
+It is installed as `/lean/wifi_bringup.sh` and is run automatically from
+Ubuntu phase A unless `/lean/ubuntu_wifi` disables it.
+
+The intended production network path is `wlan0` over Wi-Fi 6. USB is useful as
+the rescue/control plane for ADB and low-rate package maintenance, but it is
+USB 2.0 on this hardware and is not the target data plane for performance-heavy
+services.
+
+Current stability status:
+
+```text
+wlan0 can associate, get DHCP, and reach the internet.
+Sustained package-download traffic has triggered a kernel Oops once in:
+  skb_release_data -> __kfree_skb -> tcp_recvmsg -> inet6_recvmsg
+The same pstore window contained repeated WLAN/MDDP messages:
+  mddpw_drv_get_mddp_feature before MD ready
+  qmLogDropFallBehind
+```
+
+Treat Wi-Fi as functional but not yet production-qualified until repeated
+high-throughput IPv4/IPv6 tests pass without pstore crashes.
+
+Run manually from lean or Ubuntu:
 
 ```bash
 adb.exe -s 0123456789abcdef shell \
   'KEXEC_BASE=/kexec/lean WIFI_POWER_WAIT_SECS=420 /kexec/lean/busybox sh /kexec/lean/wifi_bringup.sh'
+
+adb.exe -s ubuntu012345678 shell \
+  'KEXEC_BASE=/lean WIFI_POWER_WAIT_SECS=420 /lean/busybox sh /lean/wifi_bringup.sh'
 ```
 
 Check progress:
@@ -384,11 +463,86 @@ p2p0
 ap0
 ```
 
-Busybox DHCP is available from the lean runtime:
+After `wlan0` exists, Ubuntu can connect to an access point with the normal
+`wpa_supplicant` and DHCP tools:
+
+```sh
+wpa_passphrase "SSID" "passphrase" > /etc/wpa_supplicant.conf
+chmod 600 /etc/wpa_supplicant.conf
+ip link set wlan0 up
+pkill wpa_supplicant 2>/dev/null || true
+wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf
+dhclient wlan0
+```
+
+If DNS is not written automatically because the rootfs is not booted by
+systemd/resolved, create `/etc/resolv.conf` manually:
+
+```sh
+printf 'nameserver 192.168.5.1\nnameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /etc/resolv.conf
+```
+
+Busybox DHCP is also available from the lean runtime:
 
 ```sh
 /kexec/lean/bin/udhcpc -i wlan0
 ```
+
+For stability testing, reduce variables before running high-throughput service
+loads:
+
+```sh
+sysctl -w net.ipv6.conf.all.disable_ipv6=1
+sysctl -w net.ipv6.conf.default.disable_ipv6=1
+sysctl -w net.ipv6.conf.wlan0.disable_ipv6=1
+ip link set wlan0 mtu 1400
+apt-get -o Acquire::ForceIPv4=true update
+```
+
+If `ethtool` is available, test with offload paths disabled:
+
+```sh
+ethtool -K wlan0 gro off gso off tso off rx off tx off 2>/dev/null || true
+```
+
+Run stress tests one variable at a time and collect pstore immediately after any
+return to stock Android.
+
+## Optional systemd Boot
+
+The repository default is still the phase-A script as PID 1. To test systemd
+without losing the working ADB recovery path, use the explicit one-shot flag:
+
+```text
+/kexec/lean/boot_systemd.once present
+  -> boot_ubuntu_rootfs removes the flag and execs /sbin/init
+otherwise
+  -> boot_ubuntu_rootfs execs /phase_a_init
+```
+
+The recommended first systemd unit is a compatibility service that starts the
+existing phase-A script:
+
+```ini
+[Unit]
+Description=Kexec Ubuntu phase A init
+DefaultDependencies=no
+After=local-fs.target systemd-udevd.service
+Before=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/lean/ubuntu_phase_a_init.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Once that is stable, split watchdog, ADB, vendor mounts, and Wi-Fi into separate
+units. Do not remove the phase-A fallback until systemd boot is proven to bring
+USB ADB back reliably.
 
 ## Layout
 
@@ -408,8 +562,9 @@ old/                        archived boot images, old probes, experiments
 
 ```text
 make kexec reach kxsh more consistently
-mount or recreate Android vendor/vendor_dlkm paths before Wi-Fi bring-up
-debug /dev/wmtWifi I/O error after Wi-Fi modules load and phy0 appears
-persist Wi-Fi connection workflow into a script after wlan0 appears
+validate one-shot systemd PID 1 boot and keep phase-A fallback
+persist the verified wpa_supplicant/dhclient workflow into a rootfs script or unit
+qualify wlan0 as the production Wi-Fi 6 data plane under sustained TCP load
+identify or disable the unstable WLAN/MDDP/skb path seen during package downloads
 validate Docker bridge/NAT and networked containers
 ```
