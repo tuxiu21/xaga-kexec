@@ -9,6 +9,8 @@ USB_ADBD_SAMPLER_LOG=/lean/usb_adbd_sampler.log
 USB_ADBD_SAMPLER_PID=/lean/run/usb_adbd_sampler.pid
 WIFI_PID=/lean/run/wifi_bringup.ubuntu.pid
 WIFI_FLAG=/lean/ubuntu_wifi
+TIME_STATE=/lean/time_state
+TIME_KEEPER_PID=/lean/run/time_keeper.ubuntu.pid
 
 log()
 {
@@ -57,6 +59,48 @@ start_panic_timer()
         echo panic > /proc/sysrq-trigger 2>/dev/null || true
     ) &
     echo "$!" > "$PANIC_TIMER_PID"
+}
+
+restore_time()
+{
+    min_epoch=1781272800
+    now="$(date +%s 2>/dev/null || echo 0)"
+    case "$now" in ''|*[!0-9]*) now=0 ;; esac
+
+    saved="$(cat "$TIME_STATE" 2>/dev/null || true)"
+    case "$saved" in ''|*[!0-9]*) saved=0 ;; esac
+
+    if [ "$saved" -ge "$min_epoch" ] && [ "$saved" -gt "$now" ]; then
+        if date -u -s "@$saved" >/dev/null 2>&1; then
+            log "time restored from $TIME_STATE: $(date -u 2>/dev/null || true)"
+            return 0
+        fi
+        log "time restore failed from $TIME_STATE epoch=$saved"
+    else
+        log "time restore skipped now=$now saved=$saved"
+    fi
+}
+
+start_time_keeper()
+{
+    mkdir -p /lean/run
+    (
+        while true; do
+            now="$(date +%s 2>/dev/null || echo 0)"
+            case "$now" in
+                ''|*[!0-9]*|0)
+                    ;;
+                *)
+                    printf '%s\n' "$now" > "$TIME_STATE.tmp" 2>/dev/null &&
+                        mv "$TIME_STATE.tmp" "$TIME_STATE" 2>/dev/null &&
+                        sync "$TIME_STATE" 2>/dev/null || true
+                    ;;
+            esac
+            sleep 60
+        done
+    ) &
+    echo "$!" > "$TIME_KEEPER_PID"
+    log "time keeper started pid=$!"
 }
 
 log_ls()
@@ -265,6 +309,15 @@ start_adbd()
 
 start_usb_adbd_sampler()
 {
+    case "${USB_ADBD_SAMPLER:-0}" in
+        1|true|TRUE|yes|YES|on|ON)
+            ;;
+        *)
+            log "usb/adbd sampler skipped"
+            return 0
+            ;;
+    esac
+
     interval="${USB_ADBD_SAMPLE_INTERVAL:-1}"
     case "$interval" in ''|*[!0-9]*|0) interval=1 ;; esac
 
@@ -319,6 +372,31 @@ start_wifi()
     log "wifi bringup started pid=$!"
 }
 
+wait_forever()
+{
+    sync
+    log "ready; waiting for adb shell or panic timer"
+    while true; do
+        if [ -x /lean/busybox ]; then
+            /lean/busybox sleep 60
+        else
+            sleep 60
+        fi
+    done
+}
+
+case "${KEXEC_PHASE_A_MINIMAL:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+        log "minimal mode enabled"
+        start_watchdog
+        start_panic_timer
+        start_adbd
+        wait_forever
+        ;;
+esac
+
+restore_time
+start_time_keeper
 start_watchdog
 start_panic_timer
 ensure_vendor_mounts
@@ -362,12 +440,4 @@ start_wifi
     echo "===== ubuntu phase A end $(date -u 2>/dev/null || true) ====="
 } >> "$LOG" 2>&1
 
-sync
-log "ready; waiting for adb shell or panic timer"
-while true; do
-    if [ -x /lean/busybox ]; then
-        /lean/busybox sleep 60
-    else
-        sleep 60
-    fi
-done
+wait_forever

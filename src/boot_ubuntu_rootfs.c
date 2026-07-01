@@ -5,9 +5,11 @@
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -155,6 +157,126 @@ static void move_mount_if_present(const char *src, const char *dst)
     }
 }
 
+static int read_major_minor(const char *path, int *major_no, int *minor_no)
+{
+    char buf[64];
+    char *colon;
+    int fd;
+    ssize_t n;
+
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return -1;
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0)
+        return -1;
+    buf[n] = '\0';
+    colon = strchr(buf, ':');
+    if (!colon)
+        return -1;
+    *colon = '\0';
+    *major_no = atoi(buf);
+    *minor_no = atoi(colon + 1);
+    if (*major_no < 0 || *minor_no < 0)
+        return -1;
+    return 0;
+}
+
+static void mknod_char_if_missing(const char *path, mode_t mode,
+                                  int major_no, int minor_no, int *created)
+{
+    struct stat st;
+
+    if (lstat(path, &st) == 0)
+        return;
+    if (mknod(path, S_IFCHR | mode, makedev(major_no, minor_no)) == 0) {
+        (*created)++;
+        return;
+    }
+    if (errno != EEXIST)
+        logmsg("warning: mknod %s failed errno=%d", path, errno);
+}
+
+static void ensure_misc_node(const char *class_name, const char *name,
+                             const char *path, mode_t mode, int *created)
+{
+    char dev_attr[256];
+    int major_no;
+    int minor_no;
+
+    snprintf(dev_attr, sizeof(dev_attr), "/sys/class/%s/%s/dev", class_name, name);
+    if (read_major_minor(dev_attr, &major_no, &minor_no) != 0)
+        return;
+    mknod_char_if_missing(path, mode, major_no, minor_no, created);
+}
+
+static int wanted_top_block_link(const char *name)
+{
+    if (strncmp(name, "sd", 2) == 0)
+        return 1;
+    if (strncmp(name, "dm-", 3) == 0)
+        return 1;
+    if (strncmp(name, "loop", 4) == 0)
+        return 1;
+    if (strncmp(name, "ram", 3) == 0)
+        return 1;
+    return 0;
+}
+
+static void ensure_top_block_links(int *created)
+{
+    DIR *dir;
+    struct dirent *de;
+
+    dir = opendir("/dev/block");
+    if (!dir)
+        return;
+    while ((de = readdir(dir)) != NULL) {
+        char dst[256];
+        char target[256];
+        struct stat st;
+
+        if (de->d_name[0] == '.' || !wanted_top_block_link(de->d_name))
+            continue;
+        if (snprintf(dst, sizeof(dst), "/dev/%s", de->d_name) >= (int)sizeof(dst))
+            continue;
+        if (lstat(dst, &st) == 0)
+            continue;
+        if (snprintf(target, sizeof(target), "block/%s", de->d_name) >=
+            (int)sizeof(target))
+            continue;
+        if (symlink(target, dst) == 0) {
+            (*created)++;
+        } else if (errno != EEXIST) {
+            logmsg("warning: symlink %s -> %s failed errno=%d", dst, target, errno);
+        }
+    }
+    closedir(dir);
+}
+
+static void prepare_dev_nodes(void)
+{
+    int created = 0;
+
+    mkdir_p("/dev", 0755);
+    mkdir_p("/dev/net", 0755);
+    mknod_char_if_missing("/dev/null", 0666, 1, 3, &created);
+    mknod_char_if_missing("/dev/zero", 0666, 1, 5, &created);
+    mknod_char_if_missing("/dev/full", 0666, 1, 7, &created);
+    mknod_char_if_missing("/dev/random", 0666, 1, 8, &created);
+    mknod_char_if_missing("/dev/urandom", 0666, 1, 9, &created);
+    mknod_char_if_missing("/dev/tty", 0666, 5, 0, &created);
+    mknod_char_if_missing("/dev/console", 0600, 5, 1, &created);
+
+    ensure_misc_node("rfkill", "rfkill", "/dev/rfkill", 0664, &created);
+    ensure_misc_node("misc", "tun", "/dev/net/tun", 0666, &created);
+    ensure_misc_node("misc", "fuse", "/dev/fuse", 0666, &created);
+    ensure_misc_node("misc", "loop-control", "/dev/loop-control", 0660, &created);
+    ensure_top_block_links(&created);
+    logmsg("prepared /dev nodes created=%d", created);
+}
+
 static int parse_pid(const char *name, pid_t *pid)
 {
     long val = 0;
@@ -249,6 +371,7 @@ int main(void)
     mount_if_needed("devtmpfs", "/dev", "devtmpfs", 0, "mode=0755");
     mount_if_needed("devpts", "/dev/pts", "devpts", 0, "mode=0620,ptmxmode=0666");
     mount_if_needed("configfs", "/config", "configfs", 0, "");
+    prepare_dev_nodes();
 
     if (access(NEWROOT "/bin/sh", X_OK) != 0)
         die("missing Ubuntu shell at " NEWROOT "/bin/sh errno=%d", errno);

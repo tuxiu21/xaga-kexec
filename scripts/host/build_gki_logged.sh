@@ -4,6 +4,8 @@
 # Useful knobs:
 #   TAIL_LINES=120 scripts/host/build_gki_logged.sh   # print last N lines at finish
 #   FOLLOW=1 scripts/host/build_gki_logged.sh         # stream the log while building
+#   KASAN_INLINE_ONLY=1 scripts/host/build_gki_logged.sh
+#       # switch KASAN to generic inline mode without changing LTO/CFI/SCS
 
 set -u
 
@@ -14,8 +16,23 @@ LOG="$OUT/build.log"
 STATUS="$OUT/status.txt"
 TAIL_LINES="${TAIL_LINES:-40}"
 FOLLOW="${FOLLOW:-0}"
+KASAN_INLINE_ONLY="${KASAN_INLINE_ONLY:-0}"
+USER_GKI_DEFCONFIG_FRAGMENT="${GKI_DEFCONFIG_FRAGMENT:-}"
+GKI_DEFCONFIG_FRAGMENT_VALUE="$USER_GKI_DEFCONFIG_FRAGMENT"
 
 mkdir -p "$OUT"
+
+if [ "$KASAN_INLINE_ONLY" = "1" ]; then
+  if [ -n "$USER_GKI_DEFCONFIG_FRAGMENT" ]; then
+    GKI_DEFCONFIG_FRAGMENT_VALUE="$OUT/gki_defconfig_fragment.kasan_inline_only"
+    cat > "$GKI_DEFCONFIG_FRAGMENT_VALUE" <<EOF
+source "$USER_GKI_DEFCONFIG_FRAGMENT"
+source common/build.config.kasan_inline_only
+EOF
+  else
+    GKI_DEFCONFIG_FRAGMENT_VALUE="common/build.config.kasan_inline_only"
+  fi
+fi
 
 say() {
   printf '%s %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$STATUS"
@@ -40,6 +57,8 @@ CCACHE_PATH=$AK/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin
 LTO=thin
 BUILD_CONFIG=common/build.config.gki.aarch64
 BUILD_CONFIG_FRAGMENTS=build.config.ccache common/build.config.docker
+KASAN_INLINE_ONLY=$KASAN_INLINE_ONLY
+GKI_DEFCONFIG_FRAGMENT=$GKI_DEFCONFIG_FRAGMENT_VALUE
 EOF
 
 say "build started"
@@ -54,6 +73,7 @@ say "build started"
   LTO=thin \
   BUILD_CONFIG=common/build.config.gki.aarch64 \
   BUILD_CONFIG_FRAGMENTS="build.config.ccache common/build.config.docker" \
+  GKI_DEFCONFIG_FRAGMENT="$GKI_DEFCONFIG_FRAGMENT_VALUE" \
   build/build.sh
 ) >"$LOG" 2>&1 &
 

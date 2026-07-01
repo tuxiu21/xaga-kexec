@@ -135,6 +135,19 @@ create_dev_nodes()
         maj="$("$BB" awk -v x="$name" '$2==x{print $1}' /proc/devices)"
         [ -n "$maj" ] && { [ -c "$node" ] || "$BB" mknod "$node" c "$maj" 0; }
     done
+    if [ ! -e /dev/rfkill ] && [ -r /sys/class/misc/rfkill/dev ]; then
+        dev="$("$BB" cat /sys/class/misc/rfkill/dev 2>/dev/null || true)"
+        maj="${dev%:*}"
+        min="${dev#*:}"
+        case "$maj:$min" in
+            *[!0-9:]*|:|*:)
+                ;;
+            *)
+                "$BB" mknod /dev/rfkill c "$maj" "$min" 2>/dev/null || true
+                "$BB" chmod 0664 /dev/rfkill 2>/dev/null || true
+                ;;
+        esac
+    fi
 }
 
 dump_state()
@@ -143,7 +156,7 @@ dump_state()
     "$BB" lsmod | "$BB" grep -iE '^wlan_drv|^mddp|^wmt_chrdev|^conninfra|^connfem|^connscp|^scp |^connadp|^ccci|^ccmni|^rps_perf|^mtk_pbm|^mtk_mdpm|^mtk_dynamic|^mtk_low' || echo "  (NONE)"
 
     echo "## dev nodes"
-    "$BB" ls -la /dev/wmtWifi /dev/conninfra_dev /dev/connfem 2>&1
+    "$BB" ls -la /dev/wmtWifi /dev/conninfra_dev /dev/connfem /dev/rfkill 2>&1
 
     echo "## wlan ifaces"
     "$BB" ls /sys/class/net/ | "$BB" grep -iE 'wlan|p2p|ap' || echo "  (none)"
@@ -230,6 +243,7 @@ wait_for_wifi_ready()
         result="WMTWIFI_MISSING"
     fi
 
+    create_dev_nodes
     dump_state
     log_step "$result"
     echo "## result: $result"
