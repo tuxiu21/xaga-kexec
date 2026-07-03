@@ -64,10 +64,10 @@ after kexec.
 - Lean USB ADB may need a UDC replug after kexec. `src/kxsh.sh` records USB mode
   and state, writes the MTK controller mode node, binds `11201000.usb0`, and
   rebinds the UDC until the state becomes `configured`.
-- Ubuntu direct-root starts `/lean/ubuntu_phase_a_init.sh` as PID 1 through
-  `/phase_a_init` by default. For one-shot systemd tests, create
-  `/kexec/lean/boot_systemd.once` before booting Ubuntu; `boot_ubuntu_rootfs`
-  removes the flag and execs `/sbin/init` instead.
+- Ubuntu direct-root starts systemd by default by execing `/sbin/init`. For a
+  one-shot fallback to the old phase-A PID 1 path, create
+  `/kexec/lean/boot_phase_a.once` before booting Ubuntu; `boot_ubuntu_rootfs`
+  removes the flag and execs `/phase_a_init` instead.
 
 ## Safety Notes
 
@@ -261,8 +261,10 @@ stock Android kexec launcher staging area.
 
 The direct-root Ubuntu path is intentionally minimal. `src/boot_ubuntu_rootfs.c`
 moves the existing `/proc`, `/sys`, `/dev`, `/config`, and cgroup mounts into
-the Ubuntu rootfs, then execs `/phase_a_init`, which is copied from
-`/lean/ubuntu_phase_a_init.sh` immediately before switch-root.
+the Ubuntu rootfs, then execs `/sbin/init` by default. It still copies
+`/lean/ubuntu_phase_a_init.sh` to `/phase_a_init` immediately before
+switch-root so systemd can run it through the compatibility service, or so the
+one-shot phase-A fallback can use it as PID 1.
 
 `/lean/ubuntu_phase_a_init.sh` starts:
 
@@ -508,16 +510,16 @@ ethtool -K wlan0 gro off gso off tso off rx off tx off 2>/dev/null || true
 Run stress tests one variable at a time and collect pstore immediately after any
 return to stock Android.
 
-## Optional systemd Boot
+## systemd Boot
 
-The repository default is still the phase-A script as PID 1. To test systemd
-without losing the working ADB recovery path, use the explicit one-shot flag:
+The repository default is systemd as PID 1. To test the old phase-A script as
+PID 1 without changing the installed runtime, use the explicit one-shot flag:
 
 ```text
-/kexec/lean/boot_systemd.once present
-  -> boot_ubuntu_rootfs removes the flag and execs /sbin/init
+/kexec/lean/boot_phase_a.once present
+  -> boot_ubuntu_rootfs removes the flag and execs /phase_a_init
 otherwise
-  -> boot_ubuntu_rootfs execs /phase_a_init
+  -> boot_ubuntu_rootfs execs /sbin/init
 ```
 
 The recommended first systemd unit is a compatibility service that starts the
@@ -541,8 +543,8 @@ WantedBy=multi-user.target
 ```
 
 Once that is stable, split watchdog, ADB, vendor mounts, and Wi-Fi into separate
-units. Do not remove the phase-A fallback until systemd boot is proven to bring
-USB ADB back reliably.
+units. Keep the phase-A fallback until systemd boot is proven to bring USB ADB
+back reliably.
 
 ## Layout
 
@@ -562,7 +564,7 @@ old/                        archived boot images, old probes, experiments
 
 ```text
 make kexec reach kxsh more consistently
-validate one-shot systemd PID 1 boot and keep phase-A fallback
+validate default systemd PID 1 boot and keep phase-A fallback
 persist the verified wpa_supplicant/dhclient workflow into a rootfs script or unit
 qualify wlan0 as the production Wi-Fi 6 data plane under sustained TCP load
 identify or disable the unstable WLAN/MDDP/skb path seen during package downloads
