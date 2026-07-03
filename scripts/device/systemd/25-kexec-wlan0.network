@@ -1,0 +1,14 @@
+[Match]
+Name=wlan0
+
+[Network]
+DHCP=yes
+IPv6AcceptRA=yes
+
+[DHCPv4]
+UseDNS=yes
+RouteMetric=100
+
+[IPv6AcceptRA]
+UseDNS=yes
+RouteMetric=100

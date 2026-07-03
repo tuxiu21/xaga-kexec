@@ -64,10 +64,14 @@ after kexec.
 - Lean USB ADB may need a UDC replug after kexec. `src/kxsh.sh` records USB mode
   and state, writes the MTK controller mode node, binds `11201000.usb0`, and
   rebinds the UDC until the state becomes `configured`.
-- Ubuntu direct-root starts systemd by default by execing `/sbin/init`. For a
-  one-shot fallback to the old phase-A PID 1 path, create
-  `/kexec/lean/boot_phase_a.once` before booting Ubuntu; `boot_ubuntu_rootfs`
-  removes the flag and execs `/phase_a_init` instead.
+- Ubuntu direct-root starts systemd by execing `/sbin/init`. The old phase-A
+  PID 1 fallback has been removed; use the lean runtime as the rescue path.
+- Ubuntu hardware bring-up is managed by split systemd units. `kexec-wifi.service`
+  only brings up the Wi-Fi hardware; `wpa_supplicant@wlan0.service` and
+  `systemd-networkd.service` handle AP association and DHCP when
+  `/etc/wpa_supplicant/wpa_supplicant-wlan0.conf` exists.
+- OpenSSH server is installed and enabled in the Ubuntu rootfs. It uses the
+  root account's `/root/.ssh/authorized_keys` and disables password login.
 
 ## Safety Notes
 
@@ -261,12 +265,9 @@ stock Android kexec launcher staging area.
 
 The direct-root Ubuntu path is intentionally minimal. `src/boot_ubuntu_rootfs.c`
 moves the existing `/proc`, `/sys`, `/dev`, `/config`, and cgroup mounts into
-the Ubuntu rootfs, then execs `/sbin/init` by default. It still copies
-`/lean/ubuntu_phase_a_init.sh` to `/phase_a_init` immediately before
-switch-root so systemd can run it through the compatibility service, or so the
-one-shot phase-A fallback can use it as PID 1.
+the Ubuntu rootfs, then execs `/sbin/init`.
 
-`/lean/ubuntu_phase_a_init.sh` starts:
+Systemd starts split kexec services for:
 
 ```text
 watchdog feeder
@@ -275,6 +276,8 @@ vendor/vendor_dlkm mapping and mounts
 Ubuntu USB ADB
 USB/adbd sampler
 optional Wi-Fi module bring-up
+wpa_supplicant@wlan0 and systemd-networkd networking
+OpenSSH server
 ```
 
 For package maintenance in this kexec rootfs, keep the Ubuntu kernel packages
@@ -394,6 +397,14 @@ From lean:
 /kexec/lean/adbd_ubuntu.log
 ```
 
+In Ubuntu, systemd unit state is the primary runtime view:
+
+```sh
+systemctl status kexec-adbd.service kexec-wifi.service \
+  wpa_supplicant@wlan0.service systemd-networkd.service ssh.service
+journalctl -u kexec-wifi.service -u wpa_supplicant@wlan0.service -b --no-pager
+```
+
 From stock Android after reboot:
 
 ```bash
@@ -415,8 +426,8 @@ kexec-system-init: starting dropbear on 0.0.0.0:22
 ## Wi-Fi
 
 Module and firmware bring-up is handled by `scripts/device/wifi_bringup.sh`.
-It is installed as `/lean/wifi_bringup.sh` and is run automatically from
-Ubuntu phase A unless `/lean/ubuntu_wifi` disables it.
+It is installed as `/lean/wifi_bringup.sh` and is run by
+`kexec-wifi.service` unless `/lean/ubuntu_wifi` disables it.
 
 The intended production network path is `wlan0` over Wi-Fi 6. USB is useful as
 the rescue/control plane for ADB and low-rate package maintenance, but it is
@@ -465,26 +476,28 @@ p2p0
 ap0
 ```
 
-After `wlan0` exists, Ubuntu can connect to an access point with the normal
-`wpa_supplicant` and DHCP tools:
+After `wlan0` exists, Ubuntu uses the normal
+`wpa_supplicant@wlan0.service` plus `systemd-networkd` path. Create the AP
+configuration once:
 
 ```sh
-wpa_passphrase "SSID" "passphrase" > /etc/wpa_supplicant.conf
-chmod 600 /etc/wpa_supplicant.conf
-ip link set wlan0 up
-pkill wpa_supplicant 2>/dev/null || true
-wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf
-dhclient wlan0
+wpa_passphrase "SSID" "passphrase" > /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+chmod 600 /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+systemctl restart wpa_supplicant@wlan0.service systemd-networkd.service
 ```
 
-If DNS is not written automatically because the rootfs is not booted by
-systemd/resolved, create `/etc/resolv.conf` manually:
+`/etc/systemd/network/25-kexec-wlan0.network` enables DHCP for `wlan0`.
+`systemd-resolved.service` is enabled and `/etc/resolv.conf` points to the
+resolved stub, so DNS servers learned from DHCP are used automatically.
+Check connection state with:
 
 ```sh
-printf 'nameserver 192.168.5.1\nnameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /etc/resolv.conf
+networkctl status wlan0
+ip addr show wlan0
+resolvectl status 2>/dev/null || cat /etc/resolv.conf
 ```
 
-Busybox DHCP is also available from the lean runtime:
+Busybox DHCP is still available from the lean runtime for rescue testing:
 
 ```sh
 /kexec/lean/bin/udhcpc -i wlan0
@@ -512,39 +525,21 @@ return to stock Android.
 
 ## systemd Boot
 
-The repository default is systemd as PID 1. To test the old phase-A script as
-PID 1 without changing the installed runtime, use the explicit one-shot flag:
+The repository default is systemd as PID 1. The Ubuntu rootfs enters
+`multi-user.target` and starts split kexec units for time keeping, watchdog
+feeding, panic timeout, vendor partition mounts, USB ADB, Wi-Fi hardware
+bring-up, and the standard `wpa_supplicant@wlan0` plus `systemd-networkd`
+networking path.
+
+The active Ubuntu boot path is intentionally single-path:
 
 ```text
-/kexec/lean/boot_phase_a.once present
-  -> boot_ubuntu_rootfs removes the flag and execs /phase_a_init
-otherwise
-  -> boot_ubuntu_rootfs execs /sbin/init
+boot_ubuntu_rootfs -> /sbin/init -> multi-user.target
 ```
 
-The recommended first systemd unit is a compatibility service that starts the
-existing phase-A script:
-
-```ini
-[Unit]
-Description=Kexec Ubuntu phase A init
-DefaultDependencies=no
-After=local-fs.target systemd-udevd.service
-Before=multi-user.target
-
-[Service]
-Type=simple
-ExecStart=/lean/ubuntu_phase_a_init.sh
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Once that is stable, split watchdog, ADB, vendor mounts, and Wi-Fi into separate
-units. Keep the phase-A fallback until systemd boot is proven to bring USB ADB
-back reliably.
+The old phase-A PID 1 and `kexec-phase-a.service` compatibility path has been
+removed. Use the lean runtime as the rescue path if Ubuntu systemd does not
+come up.
 
 ## Layout
 
@@ -564,8 +559,8 @@ old/                        archived boot images, old probes, experiments
 
 ```text
 make kexec reach kxsh more consistently
-validate default systemd PID 1 boot and keep phase-A fallback
-persist the verified wpa_supplicant/dhclient workflow into a rootfs script or unit
+validate repeated systemd split-unit Ubuntu boots
+add and validate production wlan0 AP credentials
 qualify wlan0 as the production Wi-Fi 6 data plane under sustained TCP load
 identify or disable the unstable WLAN/MDDP/skb path seen during package downloads
 validate Docker bridge/NAT and networked containers

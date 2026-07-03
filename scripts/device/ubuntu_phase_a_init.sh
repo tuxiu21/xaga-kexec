@@ -390,69 +390,7 @@ wait_forever()
     done
 }
 
-run_full_phase_a()
-{
-    case "${KEXEC_PHASE_A_MINIMAL:-0}" in
-        1|true|TRUE|yes|YES|on|ON)
-            log "minimal mode enabled"
-            start_watchdog
-            start_panic_timer
-            start_adbd
-            wait_forever
-            ;;
-    esac
-
-    start_time_keeper
-    start_watchdog
-    start_panic_timer
-    ensure_vendor_mounts
-    start_adbd
-    start_usb_adbd_sampler
-    start_wifi
-
-    {
-        echo "===== ubuntu phase A begin $(date -u 2>/dev/null || true) ====="
-        echo "pid1=$$ comm=$(cat /proc/1/comm 2>/dev/null || true)"
-        uname -a
-        id
-        echo "--- rootfs ---"
-        findmnt / 2>/dev/null || mount | grep ' on / ' || true
-        echo "--- mounts ---"
-        mount | sed -n '1,120p'
-        echo "--- cgroup ---"
-        findmnt /sys/fs/cgroup 2>/dev/null || true
-        stat -f -c 'cgroup fs type: %T' /sys/fs/cgroup 2>/dev/null || true
-        echo "--- data ---"
-        df -h / /data 2>/dev/null || true
-        echo "--- watchdog ---"
-        cat "$WATCHDOG_PID" 2>/dev/null || true
-        ps -ef 2>/dev/null | grep '[w]atchdog_feeder' || true
-        echo "--- panic timer ---"
-        cat "$PANIC_TIMER_PID" 2>/dev/null || true
-        echo "--- adbd ---"
-        cat /lean/run/adbd.ubuntu.pid 2>/dev/null || true
-        ps -ef 2>/dev/null | grep '[a]dbd' || true
-        tail -80 "$ADBD_LOG" 2>/dev/null || true
-        echo "--- usb/adbd sampler ---"
-        cat "$USB_ADBD_SAMPLER_PID" 2>/dev/null || true
-        tail -80 "$USB_ADBD_SAMPLER_LOG" 2>/dev/null || true
-        echo "--- wifi ---"
-        cat "$WIFI_PID" 2>/dev/null || true
-        ps -ef 2>/dev/null | grep '[w]ifi_bringup' || true
-        ls -l /lean/modules 2>/dev/null | sed -n '1,80p' || true
-        tail -120 /lean/wifi_bringup.log 2>/dev/null || true
-        echo "--- docker dir ---"
-        ls -ld /var/lib/docker 2>/dev/null || true
-        echo "===== ubuntu phase A end $(date -u 2>/dev/null || true) ====="
-    } >> "$LOG" 2>&1
-
-    wait_forever
-}
-
-case "${1:-full}" in
-    full)
-        run_full_phase_a
-        ;;
+case "${1:-}" in
     time-keeper)
         start_time_keeper
         wait_forever
@@ -481,7 +419,7 @@ case "${1:-full}" in
         wait_forever
         ;;
     *)
-        echo "usage: $0 [full|time-keeper|watchdog|panic-timer|vendor-mount|adbd|usb-adbd-sampler|wifi]" >&2
+        echo "usage: $0 {time-keeper|watchdog|panic-timer|vendor-mount|adbd|usb-adbd-sampler|wifi}" >&2
         exit 2
         ;;
 esac

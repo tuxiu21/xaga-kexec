@@ -93,10 +93,11 @@ cp "$OUTPUT_DIR/watchdog_feeder" "$tmp/push/watchdog_feeder"
 cp "$OUTPUT_DIR/boot_ubuntu_rootfs" "$tmp/push/boot_ubuntu_rootfs"
 cp "$ROOT/src/kxsh.sh" "$tmp/push/kxsh.sh"
 cp "$ROOT/scripts/device/ubuntu_phase_a_init.sh" "$tmp/push/ubuntu_phase_a_init.sh"
+cp "$ROOT/scripts/device/prepare_ubuntu_kexec_boot.sh" "$tmp/push/prepare_ubuntu_kexec_boot.sh"
 cp "$ROOT/scripts/device/wifi_bringup.sh" "$tmp/push/wifi_bringup.sh"
 cp "$ROOT/scripts/device/map_super_partitions.py" "$tmp/push/map_super_partitions.py"
 cp "$ROOT/scripts/device/enter_ubuntu.sh" "$tmp/push/enter-ubuntu.sh"
-cp "$ROOT/scripts/device/systemd/"* "$tmp/push/systemd/"
+cp -R "$ROOT/scripts/device/systemd/." "$tmp/push/systemd/"
 
 chmod 0755 "$tmp/push"/adbd "$tmp/push"/busybox "$tmp/push"/dropbear \
   "$tmp/push"/dropbearkey "$tmp/push"/watchdog_feeder \
@@ -137,12 +138,19 @@ adb_root_shell "
   chmod 600 \"$LINUX_RUNTIME/root/.ssh/authorized_keys\" \"$LINUX_RUNTIME/shadow\" 2>/dev/null || true
   chmod 644 \"$LINUX_RUNTIME/passwd\" \"$LINUX_RUNTIME/group\"
   chmod 0755 \"$LINUX_RUNTIME\"
-  chmod 0755 \"$LINUX_RUNTIME\"/busybox \"$LINUX_RUNTIME\"/dropbear \"$LINUX_RUNTIME\"/dropbearkey \"$LINUX_RUNTIME\"/watchdog_feeder \"$LINUX_RUNTIME\"/boot_ubuntu_rootfs \"$LINUX_RUNTIME\"/kxsh.sh \"$LINUX_RUNTIME\"/ubuntu_phase_a_init.sh \"$LINUX_RUNTIME\"/wifi_bringup.sh \"$LINUX_RUNTIME\"/map_super_partitions.py \"$LINUX_RUNTIME\"/enter-ubuntu.sh \"$LINUX_RUNTIME\"/linker64 \"$LINUX_RUNTIME\"/adbd 2>/dev/null || true
+  chmod 0755 \"$LINUX_RUNTIME\"/busybox \"$LINUX_RUNTIME\"/dropbear \"$LINUX_RUNTIME\"/dropbearkey \"$LINUX_RUNTIME\"/watchdog_feeder \"$LINUX_RUNTIME\"/boot_ubuntu_rootfs \"$LINUX_RUNTIME\"/kxsh.sh \"$LINUX_RUNTIME\"/ubuntu_phase_a_init.sh \"$LINUX_RUNTIME\"/prepare_ubuntu_kexec_boot.sh \"$LINUX_RUNTIME\"/wifi_bringup.sh \"$LINUX_RUNTIME\"/map_super_partitions.py \"$LINUX_RUNTIME\"/enter-ubuntu.sh \"$LINUX_RUNTIME\"/linker64 \"$LINUX_RUNTIME\"/adbd 2>/dev/null || true
   chmod 0644 \"$LINUX_RUNTIME\"/adblib/*.so 2>/dev/null || true
-  mkdir -p \"$LINUX_ROOT/etc/systemd/system\" \"$LINUX_ROOT/etc/systemd/system/multi-user.target.wants\"
-  cp \"$LINUX_RUNTIME/systemd/\"* \"$LINUX_ROOT/etc/systemd/system/\"
+  mkdir -p \"$LINUX_ROOT/etc/systemd/system\" \"$LINUX_ROOT/etc/systemd/network\" \
+    \"$LINUX_ROOT/etc/systemd/system/multi-user.target.wants\" \
+    \"$LINUX_ROOT/etc/systemd/system/sysinit.target.wants\"
+  cp \"$LINUX_RUNTIME/systemd/\"*.service \"$LINUX_RUNTIME/systemd/\"*.target \"$LINUX_ROOT/etc/systemd/system/\"
+  cp -R \"$LINUX_RUNTIME/systemd/\"*.service.d \"$LINUX_ROOT/etc/systemd/system/\" 2>/dev/null || true
+  cp \"$LINUX_RUNTIME/systemd/\"*.network \"$LINUX_ROOT/etc/systemd/network/\" 2>/dev/null || true
   chmod 0644 \"$LINUX_ROOT/etc/systemd/system\"/kexec-*.service \"$LINUX_ROOT/etc/systemd/system\"/kexec-*.target 2>/dev/null || true
-  rm -f \"$LINUX_ROOT/etc/systemd/system/multi-user.target.wants/kexec-phase-a.service\"
+  chmod 0644 \"$LINUX_ROOT/etc/systemd/system\"/*.service.d/*.conf \"$LINUX_ROOT/etc/systemd/network\"/*.network 2>/dev/null || true
+  rm -f \"$LINUX_ROOT/etc/systemd/system/kexec-phase-a.service\" \
+    \"$LINUX_ROOT/etc/systemd/system/multi-user.target.wants/kexec-phase-a.service\"
+  rm -rf \"$LINUX_ROOT/etc/systemd/system/kexec-phase-a.service.d\"
   for unit in \
     kexec-time-keeper.service \
     kexec-watchdog.service \
@@ -152,6 +160,12 @@ adb_root_shell "
     kexec-wifi.service; do
     ln -sfn \"../\$unit\" \"$LINUX_ROOT/etc/systemd/system/multi-user.target.wants/\$unit\"
   done
+  ln -sfn /lib/systemd/system/systemd-networkd.service \"$LINUX_ROOT/etc/systemd/system/multi-user.target.wants/systemd-networkd.service\"
+  rm -f \"$LINUX_ROOT/etc/systemd/system/systemd-resolved.service\"
+  ln -sfn /lib/systemd/system/systemd-resolved.service \"$LINUX_ROOT/etc/systemd/system/sysinit.target.wants/systemd-resolved.service\"
+  ln -sfn /lib/systemd/system/systemd-resolved.service \"$LINUX_ROOT/etc/systemd/system/dbus-org.freedesktop.resolve1.service\"
+  ln -sfn ../run/systemd/resolve/stub-resolv.conf \"$LINUX_ROOT/etc/resolv.conf\"
+  ln -sfn /lib/systemd/system/wpa_supplicant@.service \"$LINUX_ROOT/etc/systemd/system/multi-user.target.wants/wpa_supplicant@wlan0.service\"
   rm -rf \"$LINUX_RUNTIME/modules\"
   mkdir -p \"$LINUX_RUNTIME/modules\"
   for mod in $wifi_modules; do

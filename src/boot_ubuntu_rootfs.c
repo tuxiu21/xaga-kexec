@@ -21,8 +21,6 @@
 #define LEAN "/kexec/lean"
 #define LOG_FILE LEAN "/boot_ubuntu_rootfs.log"
 #define INIT_SRC LEAN "/ubuntu_phase_a_init.sh"
-#define SWITCH_INIT "/phase_a_init"
-#define PHASE_A_FLAG LEAN "/boot_phase_a.once"
 #define SYSTEMD_INIT "/sbin/init"
 
 static void mkdir_p(const char *path, mode_t mode)
@@ -97,44 +95,6 @@ static void die(const char *fmt, ...)
     vlogmsg(fmt, ap);
     va_end(ap);
     panic_now();
-}
-
-static int copy_file(const char *src, const char *dst, mode_t mode)
-{
-    char buf[65536];
-    int in, out;
-    ssize_t n;
-
-    in = open(src, O_RDONLY | O_CLOEXEC);
-    if (in < 0)
-        return -1;
-    out = open(dst, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
-    if (out < 0) {
-        close(in);
-        return -1;
-    }
-    while ((n = read(in, buf, sizeof(buf))) > 0) {
-        char *p = buf;
-        ssize_t left = n;
-        while (left > 0) {
-            ssize_t w = write(out, p, left);
-            if (w <= 0) {
-                close(in);
-                close(out);
-                return -1;
-            }
-            p += w;
-            left -= w;
-        }
-    }
-    close(in);
-    if (fsync(out) != 0) {
-        close(out);
-        return -1;
-    }
-    close(out);
-    chmod(dst, mode);
-    return n == 0 ? 0 : -1;
 }
 
 static int mount_if_needed(const char *src, const char *target, const char *type,
@@ -353,9 +313,7 @@ static void clean_lean_processes(void)
 
 int main(void)
 {
-    char new_init[256];
     const char *init_path = SYSTEMD_INIT;
-    char *phase_a_argv[] = { SWITCH_INIT, NULL };
     char *systemd_argv[] = { SYSTEMD_INIT, NULL };
     char **argv = systemd_argv;
     char *envp[] = {
@@ -379,16 +337,9 @@ int main(void)
         die("missing Ubuntu os-release errno=%d", errno);
     if (access(INIT_SRC, X_OK) != 0)
         die("missing init %s errno=%d", INIT_SRC, errno);
-    if (access(PHASE_A_FLAG, F_OK) == 0) {
-        init_path = SWITCH_INIT;
-        argv = phase_a_argv;
-        logmsg("phase-A boot flag present; will exec " SWITCH_INIT);
-        unlink(PHASE_A_FLAG);
-    } else {
-        if (access(NEWROOT SYSTEMD_INIT, X_OK) != 0)
-            die("default systemd boot missing " SYSTEMD_INIT " errno=%d", errno);
-        logmsg("default systemd boot; will exec " SYSTEMD_INIT);
-    }
+    if (access(NEWROOT SYSTEMD_INIT, X_OK) != 0)
+        die("default systemd boot missing " SYSTEMD_INIT " errno=%d", errno);
+    logmsg("default systemd boot; will exec " SYSTEMD_INIT);
 
     mkdir_p(NEWROOT "/proc", 0755);
     mkdir_p(NEWROOT "/sys", 0755);
@@ -398,11 +349,6 @@ int main(void)
     mkdir_p(NEWROOT "/data", 0755);
     mkdir_p(NEWROOT "/config", 0755);
     mkdir_p(NEWROOT "/sys/fs/cgroup", 0755);
-
-    snprintf(new_init, sizeof(new_init), "%s%s", NEWROOT, SWITCH_INIT);
-    unlink(new_init);
-    if (copy_file(INIT_SRC, new_init, 0755) != 0)
-        die("copy init to %s failed errno=%d", new_init, errno);
 
     mount_if_needed("tmpfs", NEWROOT "/run", "tmpfs", 0, "mode=0755");
     mount_if_needed("none", "/sys/fs/cgroup", "cgroup2", 0, "");
