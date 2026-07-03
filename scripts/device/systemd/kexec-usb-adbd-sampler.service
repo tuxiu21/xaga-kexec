@@ -1,0 +1,14 @@
+[Unit]
+Description=Kexec Ubuntu USB ADB sampler
+DefaultDependencies=no
+After=kexec-adbd.service
+
+[Service]
+Type=simple
+Environment=USB_ADBD_SAMPLER=1
+ExecStart=/bin/bash /lean/ubuntu_phase_a_init.sh usb-adbd-sampler
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

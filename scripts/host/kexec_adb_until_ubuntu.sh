@@ -13,6 +13,7 @@ UBUNTU_SERIAL="${UBUNTU_SERIAL:-ubuntu012345678}"
 LEAN_SERIAL="${LEAN_SERIAL:-0123456789abcdef}"
 PANIC_AFTER="${PANIC_AFTER:-900}"
 UBUNTU_WIFI="${UBUNTU_WIFI:-1}"
+UBUNTU_WIFI_WAIT_READY="${UBUNTU_WIFI_WAIT_READY:-1}"
 BOOT_SYSTEMD="${BOOT_SYSTEMD:-1}"
 KEXEC_PHASE_A_MINIMAL="${KEXEC_PHASE_A_MINIMAL:-0}"
 UBUNTU_WIFI_WAIT="${UBUNTU_WIFI_WAIT:-260}"
@@ -130,6 +131,10 @@ wait_after_kexec() {
 wait_ubuntu_wifi_done() {
     local r="$1" status i
     [ "$UBUNTU_WIFI" = "1" ] || return 0
+    [ "$UBUNTU_WIFI_WAIT_READY" = "1" ] || {
+        say "round $r: not waiting for Ubuntu Wi-Fi bringup result (UBUNTU_WIFI_WAIT_READY=$UBUNTU_WIFI_WAIT_READY)"
+        return 0
+    }
     say "round $r: waiting for Ubuntu Wi-Fi bringup result (${UBUNTU_WIFI_WAIT}s max)"
     for i in $(seq 1 "$UBUNTU_WIFI_WAIT"); do
         if ! ubuntu_up; then
@@ -176,6 +181,7 @@ build_cmdline() {
         initrd_kib="$(( ($(wc -c < "$initrd_local") + 1023) / 1024 ))"
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )debug_ext\\.initrd_size=[^ ]*/ /g")"
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )firmware_class\\.path=[^ ]*/ /g")"
+        base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )arm64\\.nomte( |$)/ /g")"
         base_cmdline="$base_cmdline debug_ext.initrd_size=$initrd_kib"
     fi
     # Preserve the active Android slot in the synthetic kexec cmdline.
@@ -213,7 +219,7 @@ print_ubuntu_logs() {
 }
 
 STOCK_SERIAL="$(adb_devices | awk -v u="$UBUNTU_SERIAL" -v l="$LEAN_SERIAL" 'NR>1 && $2=="device" && $1!=u && $1!=l {print $1; exit}')"
-say "initrd=$INITRD dtb=${DTB_DEV:-<live>} max=$MAX ubuntu=$UBUNTU_SERIAL stock=$STOCK_SERIAL panic=${PANIC_AFTER}s wifi=${UBUNTU_WIFI} systemd=${BOOT_SYSTEMD} phase_a_minimal=${KEXEC_PHASE_A_MINIMAL} wifi_wait=${UBUNTU_WIFI_WAIT}s out=$OUT"
+say "initrd=$INITRD dtb=${DTB_DEV:-<live>} max=$MAX ubuntu=$UBUNTU_SERIAL stock=$STOCK_SERIAL panic=${PANIC_AFTER}s wifi=${UBUNTU_WIFI} wait_wifi_ready=${UBUNTU_WIFI_WAIT_READY} systemd=${BOOT_SYSTEMD} phase_a_minimal=${KEXEC_PHASE_A_MINIMAL} wifi_wait=${UBUNTU_WIFI_WAIT}s out=$OUT"
 
 if ubuntu_up; then
     say "already on Ubuntu ADB; probing current root"
@@ -231,7 +237,7 @@ for r in $(seq 1 "$MAX"); do
     wait_stock_ready || say "round $r: boot_completed not seen, continuing"
 
     say "round $r: clearing pstore + Ubuntu logs, panic_after=${PANIC_AFTER}s wifi=${UBUNTU_WIFI}"
-    adb_root_shell "mkdir -p $LINUX_MOUNT; grep -q \" $LINUX_MOUNT \" /proc/mounts || mount -t ext4 -o rw,noatime $LINUX_DEV $LINUX_MOUNT 2>/dev/null || mount -t ext4 -o rw,noatime $LINUX_DEV_FALLBACK $LINUX_MOUNT; mkdir -p $LEAN_DIR/run; rm -f /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-*; : > $LEAN_DIR/kxsh.log; : > $LEAN_DIR/adbd.log; : > $LEAN_DIR/boot_ubuntu_rootfs.log; : > $LEAN_DIR/ubuntu_phase_a.log; : > $LEAN_DIR/adbd_ubuntu.log; : > $LEAN_DIR/usb_adbd_sampler.log; : > $LEAN_DIR/wifi_bringup.log; : > $LEAN_DIR/wifi_load_progress.txt; : > $LEAN_DIR/dmesg_wifi_before.log; : > $LEAN_DIR/dmesg_wifi_after.log; rm -f $LEAN_DIR/run/adbd.ubuntu.pid $LEAN_DIR/run/usb_adbd_sampler.pid $LEAN_DIR/run/panic_timer.ubuntu.pid $LEAN_DIR/run/wifi_bringup.ubuntu.pid $LEAN_DIR/boot_systemd.once $LEAN_DIR/boot_phase_a.once; mkdir -p $LINUX_MOUNT/etc/systemd/system/kexec-phase-a.service.d $LINUX_MOUNT/etc/systemd/system; ln -sf /dev/null $LINUX_MOUNT/etc/systemd/system/systemd-networkd-wait-online.service; if [ \"$KEXEC_PHASE_A_MINIMAL\" = 1 ]; then { echo '[Service]'; echo 'Environment=KEXEC_PHASE_A_MINIMAL=1'; } > $LINUX_MOUNT/etc/systemd/system/kexec-phase-a.service.d/20-kexec-mode.conf; else rm -f $LINUX_MOUNT/etc/systemd/system/kexec-phase-a.service.d/20-kexec-mode.conf; fi; echo $PANIC_AFTER > $LEAN_DIR/panic_after; echo $UBUNTU_WIFI > $LEAN_DIR/ubuntu_wifi; touch $LEAN_DIR/boot_ubuntu_rootfs.once; if [ \"$BOOT_SYSTEMD\" != 1 ]; then touch $LEAN_DIR/boot_phase_a.once; fi; sync" >/dev/null 2>&1
+    adb_root_shell "mkdir -p $LINUX_MOUNT; grep -q \" $LINUX_MOUNT \" /proc/mounts || mount -t ext4 -o rw,noatime $LINUX_DEV $LINUX_MOUNT 2>/dev/null || mount -t ext4 -o rw,noatime $LINUX_DEV_FALLBACK $LINUX_MOUNT; mkdir -p $LEAN_DIR/run; rm -f /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-*; : > $LEAN_DIR/kxsh.log; : > $LEAN_DIR/adbd.log; : > $LEAN_DIR/boot_ubuntu_rootfs.log; : > $LEAN_DIR/ubuntu_phase_a.log; : > $LEAN_DIR/adbd_ubuntu.log; : > $LEAN_DIR/usb_adbd_sampler.log; : > $LEAN_DIR/wifi_bringup.log; : > $LEAN_DIR/wifi_load_progress.txt; : > $LEAN_DIR/dmesg_wifi_before.log; : > $LEAN_DIR/dmesg_wifi_after.log; rm -f $LEAN_DIR/run/adbd.ubuntu.pid $LEAN_DIR/run/adbd.ready $LEAN_DIR/run/usb_adbd_sampler.pid $LEAN_DIR/run/panic_timer.ubuntu.pid $LEAN_DIR/run/wifi_bringup.ubuntu.pid $LEAN_DIR/boot_systemd.once $LEAN_DIR/boot_phase_a.once; mkdir -p $LINUX_MOUNT/etc/systemd/system/kexec-phase-a.service.d $LINUX_MOUNT/etc/systemd/system $LINUX_MOUNT/etc/systemd/system/multi-user.target.wants; ln -sfn /lib/systemd/system/multi-user.target $LINUX_MOUNT/etc/systemd/system/default.target; rm -f $LINUX_MOUNT/etc/systemd/system/multi-user.target.wants/kexec-phase-a.service; for unit in kexec-time-keeper.service kexec-watchdog.service kexec-panic-timer.service kexec-vendor-mount.service kexec-adbd.service kexec-wifi.service; do [ -f $LINUX_MOUNT/etc/systemd/system/\$unit ] && ln -sfn ../\$unit $LINUX_MOUNT/etc/systemd/system/multi-user.target.wants/\$unit; done; ln -sf /dev/null $LINUX_MOUNT/etc/systemd/system/systemd-networkd-wait-online.service; if [ \"$KEXEC_PHASE_A_MINIMAL\" = 1 ]; then { echo '[Service]'; echo 'Environment=KEXEC_PHASE_A_MINIMAL=1'; } > $LINUX_MOUNT/etc/systemd/system/kexec-phase-a.service.d/20-kexec-mode.conf; else rm -f $LINUX_MOUNT/etc/systemd/system/kexec-phase-a.service.d/20-kexec-mode.conf; fi; echo $PANIC_AFTER > $LEAN_DIR/panic_after; echo $UBUNTU_WIFI > $LEAN_DIR/ubuntu_wifi; touch $LEAN_DIR/boot_ubuntu_rootfs.once; if [ \"$BOOT_SYSTEMD\" != 1 ]; then touch $LEAN_DIR/boot_phase_a.once; fi; sync" >/dev/null 2>&1
 
     cmdline="$(build_cmdline)"
     printf '%s\n' "$cmdline" > "$OUT/round_${r}_cmdline.txt"

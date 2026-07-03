@@ -1,0 +1,14 @@
+[Unit]
+Description=Kexec Ubuntu time restore and keeper
+DefaultDependencies=no
+After=local-fs.target
+Before=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /lean/ubuntu_phase_a_init.sh time-keeper
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

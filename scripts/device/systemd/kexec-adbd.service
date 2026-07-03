@@ -1,0 +1,15 @@
+[Unit]
+Description=Kexec Ubuntu USB ADB
+DefaultDependencies=no
+After=local-fs.target kexec-vendor-mount.service
+Before=multi-user.target
+Wants=kexec-vendor-mount.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /lean/ubuntu_phase_a_init.sh adbd
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

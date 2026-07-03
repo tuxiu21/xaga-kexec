@@ -1,0 +1,14 @@
+[Unit]
+Description=Kexec Ubuntu watchdog feeder
+DefaultDependencies=no
+After=local-fs.target
+Before=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /lean/ubuntu_phase_a_init.sh watchdog
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

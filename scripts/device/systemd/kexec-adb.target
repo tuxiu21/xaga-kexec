@@ -1,0 +1,7 @@
+[Unit]
+Description=Kexec minimal ADB target
+DefaultDependencies=no
+Requires=kexec-adbd.service
+Wants=kexec-time-keeper.service kexec-watchdog.service kexec-panic-timer.service kexec-vendor-mount.service
+After=kexec-adbd.service
+AllowIsolate=yes

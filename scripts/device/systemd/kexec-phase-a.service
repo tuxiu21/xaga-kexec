@@ -1,0 +1,10 @@
+[Unit]
+Description=Kexec Ubuntu legacy phase-A bring-up
+DefaultDependencies=no
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /lean/ubuntu_phase_a_init.sh full
+Restart=always
+RestartSec=5
+KillMode=control-group

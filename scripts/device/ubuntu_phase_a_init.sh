@@ -5,6 +5,7 @@ LOG=/lean/ubuntu_phase_a.log
 WATCHDOG_PID=/lean/run/watchdog_feeder.ubuntu.pid
 PANIC_TIMER_PID=/lean/run/panic_timer.ubuntu.pid
 ADBD_LOG=/lean/adbd_ubuntu.log
+ADBD_READY=/lean/run/adbd.ready
 USB_ADBD_SAMPLER_LOG=/lean/usb_adbd_sampler.log
 USB_ADBD_SAMPLER_PID=/lean/run/usb_adbd_sampler.pid
 WIFI_PID=/lean/run/wifi_bringup.ubuntu.pid
@@ -83,6 +84,7 @@ restore_time()
 
 start_time_keeper()
 {
+    restore_time
     mkdir -p /lean/run
     (
         while true; do
@@ -203,11 +205,13 @@ ensure_vendor_mounts()
         echo "--- vendor paths ---"
         ls -la /vendor/firmware /vendor/etc/firmware /vendor/lib/modules /vendor_dlkm/lib/modules 2>&1 | sed -n '1,160p'
     } >> "$LOG" 2>&1
+    return 0
 }
 
 start_adbd()
 {
     log "setup adbd: begin"
+    rm -f "$ADBD_READY"
 
     mount_if_needed /proc proc proc ""
     mount_if_needed /sys sysfs sysfs ""
@@ -295,6 +299,7 @@ start_adbd()
         st="$(cat "$state_node" 2>/dev/null || echo unknown)"
         if [ "$st" = "configured" ]; then
             log "setup adbd: host enumerated attempt=$attempt"
+            : > "$ADBD_READY"
             return 0
         fi
         log "setup adbd: not enumerated state=$st attempt=$attempt; replug"
@@ -385,59 +390,98 @@ wait_forever()
     done
 }
 
-case "${KEXEC_PHASE_A_MINIMAL:-0}" in
-    1|true|TRUE|yes|YES|on|ON)
-        log "minimal mode enabled"
+run_full_phase_a()
+{
+    case "${KEXEC_PHASE_A_MINIMAL:-0}" in
+        1|true|TRUE|yes|YES|on|ON)
+            log "minimal mode enabled"
+            start_watchdog
+            start_panic_timer
+            start_adbd
+            wait_forever
+            ;;
+    esac
+
+    start_time_keeper
+    start_watchdog
+    start_panic_timer
+    ensure_vendor_mounts
+    start_adbd
+    start_usb_adbd_sampler
+    start_wifi
+
+    {
+        echo "===== ubuntu phase A begin $(date -u 2>/dev/null || true) ====="
+        echo "pid1=$$ comm=$(cat /proc/1/comm 2>/dev/null || true)"
+        uname -a
+        id
+        echo "--- rootfs ---"
+        findmnt / 2>/dev/null || mount | grep ' on / ' || true
+        echo "--- mounts ---"
+        mount | sed -n '1,120p'
+        echo "--- cgroup ---"
+        findmnt /sys/fs/cgroup 2>/dev/null || true
+        stat -f -c 'cgroup fs type: %T' /sys/fs/cgroup 2>/dev/null || true
+        echo "--- data ---"
+        df -h / /data 2>/dev/null || true
+        echo "--- watchdog ---"
+        cat "$WATCHDOG_PID" 2>/dev/null || true
+        ps -ef 2>/dev/null | grep '[w]atchdog_feeder' || true
+        echo "--- panic timer ---"
+        cat "$PANIC_TIMER_PID" 2>/dev/null || true
+        echo "--- adbd ---"
+        cat /lean/run/adbd.ubuntu.pid 2>/dev/null || true
+        ps -ef 2>/dev/null | grep '[a]dbd' || true
+        tail -80 "$ADBD_LOG" 2>/dev/null || true
+        echo "--- usb/adbd sampler ---"
+        cat "$USB_ADBD_SAMPLER_PID" 2>/dev/null || true
+        tail -80 "$USB_ADBD_SAMPLER_LOG" 2>/dev/null || true
+        echo "--- wifi ---"
+        cat "$WIFI_PID" 2>/dev/null || true
+        ps -ef 2>/dev/null | grep '[w]ifi_bringup' || true
+        ls -l /lean/modules 2>/dev/null | sed -n '1,80p' || true
+        tail -120 /lean/wifi_bringup.log 2>/dev/null || true
+        echo "--- docker dir ---"
+        ls -ld /var/lib/docker 2>/dev/null || true
+        echo "===== ubuntu phase A end $(date -u 2>/dev/null || true) ====="
+    } >> "$LOG" 2>&1
+
+    wait_forever
+}
+
+case "${1:-full}" in
+    full)
+        run_full_phase_a
+        ;;
+    time-keeper)
+        start_time_keeper
+        wait_forever
+        ;;
+    watchdog)
         start_watchdog
+        wait_forever
+        ;;
+    panic-timer)
         start_panic_timer
+        wait_forever
+        ;;
+    vendor-mount)
+        ensure_vendor_mounts
+        ;;
+    adbd)
         start_adbd
         wait_forever
         ;;
+    usb-adbd-sampler)
+        start_usb_adbd_sampler
+        wait_forever
+        ;;
+    wifi)
+        start_wifi
+        wait_forever
+        ;;
+    *)
+        echo "usage: $0 [full|time-keeper|watchdog|panic-timer|vendor-mount|adbd|usb-adbd-sampler|wifi]" >&2
+        exit 2
+        ;;
 esac
-
-restore_time
-start_time_keeper
-start_watchdog
-start_panic_timer
-ensure_vendor_mounts
-start_adbd
-start_usb_adbd_sampler
-start_wifi
-
-{
-    echo "===== ubuntu phase A begin $(date -u 2>/dev/null || true) ====="
-    echo "pid1=$$ comm=$(cat /proc/1/comm 2>/dev/null || true)"
-    uname -a
-    id
-    echo "--- rootfs ---"
-    findmnt / 2>/dev/null || mount | grep ' on / ' || true
-    echo "--- mounts ---"
-    mount | sed -n '1,120p'
-    echo "--- cgroup ---"
-    findmnt /sys/fs/cgroup 2>/dev/null || true
-    stat -f -c 'cgroup fs type: %T' /sys/fs/cgroup 2>/dev/null || true
-    echo "--- data ---"
-    df -h / /data 2>/dev/null || true
-    echo "--- watchdog ---"
-    cat "$WATCHDOG_PID" 2>/dev/null || true
-    ps -ef 2>/dev/null | grep '[w]atchdog_feeder' || true
-    echo "--- panic timer ---"
-    cat "$PANIC_TIMER_PID" 2>/dev/null || true
-    echo "--- adbd ---"
-    cat /lean/run/adbd.ubuntu.pid 2>/dev/null || true
-    ps -ef 2>/dev/null | grep '[a]dbd' || true
-    tail -80 "$ADBD_LOG" 2>/dev/null || true
-    echo "--- usb/adbd sampler ---"
-    cat "$USB_ADBD_SAMPLER_PID" 2>/dev/null || true
-    tail -80 "$USB_ADBD_SAMPLER_LOG" 2>/dev/null || true
-    echo "--- wifi ---"
-    cat "$WIFI_PID" 2>/dev/null || true
-    ps -ef 2>/dev/null | grep '[w]ifi_bringup' || true
-    ls -l /lean/modules 2>/dev/null | sed -n '1,80p' || true
-    tail -120 /lean/wifi_bringup.log 2>/dev/null || true
-    echo "--- docker dir ---"
-    ls -ld /var/lib/docker 2>/dev/null || true
-    echo "===== ubuntu phase A end $(date -u 2>/dev/null || true) ====="
-} >> "$LOG" 2>&1
-
-wait_forever

@@ -1,0 +1,13 @@
+[Unit]
+Description=Kexec Ubuntu vendor partition mounts
+DefaultDependencies=no
+After=local-fs.target systemd-udevd.service
+Before=kexec-adbd.service kexec-wifi.service multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /lean/ubuntu_phase_a_init.sh vendor-mount
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Kexec Ubuntu panic timer
+DefaultDependencies=no
+After=local-fs.target
+Before=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /lean/ubuntu_phase_a_init.sh panic-timer
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

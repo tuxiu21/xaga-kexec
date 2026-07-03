@@ -102,6 +102,7 @@ build_cmdline() {
         initrd_kib="$(( ($(wc -c < "$initrd_local") + 1023) / 1024 ))"
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )debug_ext\\.initrd_size=[^ ]*/ /g")"
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )firmware_class\\.path=[^ ]*/ /g")"
+        base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )arm64\\.nomte( |$)/ /g")"
         base_cmdline="$base_cmdline debug_ext.initrd_size=$initrd_kib"
     fi
     # Preserve the active Android slot in the synthetic kexec cmdline.
