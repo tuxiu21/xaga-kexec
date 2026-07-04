@@ -146,8 +146,9 @@ adb_root_shell "
   cp \"$LINUX_RUNTIME/systemd/\"*.service \"$LINUX_RUNTIME/systemd/\"*.target \"$LINUX_ROOT/etc/systemd/system/\"
   cp -R \"$LINUX_RUNTIME/systemd/\"*.service.d \"$LINUX_ROOT/etc/systemd/system/\" 2>/dev/null || true
   cp \"$LINUX_RUNTIME/systemd/\"*.network \"$LINUX_ROOT/etc/systemd/network/\" 2>/dev/null || true
+  cp \"$LINUX_RUNTIME/systemd/\"*.link \"$LINUX_ROOT/etc/systemd/network/\" 2>/dev/null || true
   chmod 0644 \"$LINUX_ROOT/etc/systemd/system\"/kexec-*.service \"$LINUX_ROOT/etc/systemd/system\"/kexec-*.target 2>/dev/null || true
-  chmod 0644 \"$LINUX_ROOT/etc/systemd/system\"/*.service.d/*.conf \"$LINUX_ROOT/etc/systemd/network\"/*.network 2>/dev/null || true
+  chmod 0644 \"$LINUX_ROOT/etc/systemd/system\"/*.service.d/*.conf \"$LINUX_ROOT/etc/systemd/network\"/*.network \"$LINUX_ROOT/etc/systemd/network\"/*.link 2>/dev/null || true
   rm -f \"$LINUX_ROOT/etc/systemd/system/kexec-phase-a.service\" \
     \"$LINUX_ROOT/etc/systemd/system/multi-user.target.wants/kexec-phase-a.service\"
   rm -rf \"$LINUX_ROOT/etc/systemd/system/kexec-phase-a.service.d\"

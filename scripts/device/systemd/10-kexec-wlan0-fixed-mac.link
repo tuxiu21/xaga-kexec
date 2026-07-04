@@ -1,0 +1,6 @@
+[Match]
+OriginalName=wlan0
+
+[Link]
+MACAddressPolicy=none
+MACAddress=00:08:22:2c:db:fc

@@ -18,6 +18,7 @@ UBUNTU_WIFI_WAIT="${UBUNTU_WIFI_WAIT:-260}"
 NOEXEC_MAX="${NOEXEC_MAX:-3}"
 PRE_KEXEC_MMINFRA_ON="${PRE_KEXEC_MMINFRA_ON:-1}"
 ADB_TIMEOUT="${ADB_TIMEOUT:-8s}"
+KEXEC_TRIGGER_TIMEOUT="${KEXEC_TRIGGER_TIMEOUT:-20s}"
 STOCK_GRACE="${STOCK_GRACE:-10}"
 LINUX_DEV="${LINUX_DEV:-/dev/block/by-name/linux}"
 LINUX_DEV_FALLBACK="${LINUX_DEV_FALLBACK:-/dev/block/sdc88}"
@@ -34,6 +35,7 @@ adb_devices() { timeout "$ADB_TIMEOUT" "$ADB" devices 2>/dev/null | tr -d '\r'; 
 serial_state() { adb_devices | awk -v s="$1" '$1==s{print $2}'; }
 ubuntu_up() { [ "$(serial_state "$UBUNTU_SERIAL")" = "device" ]; }
 stock_up() { [ -n "$STOCK_SERIAL" ] && [ "$(serial_state "$STOCK_SERIAL")" = "device" ]; }
+detect_stock_serial() { adb_devices | awk -v u="$UBUNTU_SERIAL" -v l="$LEAN_SERIAL" 'NR>1 && $2=="device" && $1!=u && $1!=l {print $1; exit}'; }
 
 adb_root_shell()
 {
@@ -233,7 +235,9 @@ print_ubuntu_logs() {
     echo "====================="
 }
 
-STOCK_SERIAL="$(adb_devices | awk -v u="$UBUNTU_SERIAL" -v l="$LEAN_SERIAL" 'NR>1 && $2=="device" && $1!=u && $1!=l {print $1; exit}')"
+if [ -z "$STOCK_SERIAL" ]; then
+    STOCK_SERIAL="$(detect_stock_serial)"
+fi
 say "initrd=$INITRD dtb=${DTB_DEV:-<live>} max=$MAX ubuntu=$UBUNTU_SERIAL stock=$STOCK_SERIAL panic=${PANIC_AFTER}s wifi=${UBUNTU_WIFI} wait_wifi_ready=${UBUNTU_WIFI_WAIT_READY} wifi_wait=${UBUNTU_WIFI_WAIT}s out=$OUT"
 
 if ubuntu_up; then
@@ -250,6 +254,10 @@ noexec=0
 for r in $(seq 1 "$MAX"); do
     say "round $r: waiting for stock Android"
     wait_stock_ready || say "round $r: boot_completed not seen, continuing"
+    if [ -z "$STOCK_SERIAL" ]; then
+        STOCK_SERIAL="$(detect_stock_serial)"
+        say "round $r: detected stock serial=${STOCK_SERIAL:-<empty>}"
+    fi
 
     say "round $r: clearing pstore + Ubuntu logs, panic_after=${PANIC_AFTER}s wifi=${UBUNTU_WIFI}"
     prepare_ubuntu_boot >/dev/null 2>&1
@@ -268,7 +276,9 @@ for r in $(seq 1 "$MAX"); do
 
     nonce="UBUNTU-r${r}-$(date +%s)-${RANDOM}"
     say "round $r: kexec into Ubuntu rootfs path (nonce=$nonce)"
-    $ADB shell "su -c 'cd /data/local/tmp && echo 0 > /proc/sys/kernel/kptr_restrict && ./kexec -c -l kernel --initrd=$INITRD_DEV ${DTB_DEV:+--dtb=$DTB_DEV} --append=\"$cmdline\" && sync && echo $nonce > /dev/kmsg && echo 1 > /dev/watchdog 2>/dev/null && echo 1 > /dev/watchdog0 2>/dev/null; ./kexec -f -e'" >/dev/null 2>&1
+    timeout "$KEXEC_TRIGGER_TIMEOUT" "$ADB" shell "su -c 'cd /data/local/tmp && echo 0 > /proc/sys/kernel/kptr_restrict && ./kexec -c -l kernel --initrd=$INITRD_DEV ${DTB_DEV:+--dtb=$DTB_DEV} --append=\"$cmdline\" && sync && echo $nonce > /dev/kmsg && echo 1 > /dev/watchdog 2>/dev/null && echo 1 > /dev/watchdog0 2>/dev/null; ./kexec -f -e'" > "$OUT/round_${r}_kexec_trigger.log" 2>&1
+    kexec_trigger_rc=$?
+    say "round $r: kexec trigger adb command returned rc=$kexec_trigger_rc"
 
     wait_after_kexec; rc=$?
 
