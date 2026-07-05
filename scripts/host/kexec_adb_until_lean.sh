@@ -11,6 +11,7 @@ DTB_DEV="${DTB_DEV:-patched.dtb}"
 MAX="${2:-8}"
 LEAN_SERIAL="${LEAN_SERIAL:-0123456789abcdef}"
 PANIC_AFTER="${PANIC_AFTER:-60}"
+KEXEC_EXTRA_CMDLINE="${KEXEC_EXTRA_CMDLINE-slub_debug=FZPU init_on_free=1}"
 NOEXEC_MAX="${NOEXEC_MAX:-3}"
 PRE_KEXEC_MMINFRA_ON="${PRE_KEXEC_MMINFRA_ON:-1}"
 LINUX_DEV="${LINUX_DEV:-/dev/block/by-name/linux}"
@@ -103,6 +104,8 @@ build_cmdline() {
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )debug_ext\\.initrd_size=[^ ]*/ /g")"
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )firmware_class\\.path=[^ ]*/ /g")"
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )arm64\\.nomte( |$)/ /g")"
+        base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )slub_debug=[^ ]*/ /g")"
+        base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )init_on_free=[^ ]*/ /g")"
         base_cmdline="$base_cmdline debug_ext.initrd_size=$initrd_kib"
     fi
     # Preserve the active Android slot in the synthetic kexec cmdline.
@@ -111,7 +114,7 @@ build_cmdline() {
     bootconfig_args="$($ADB shell "su -c 'cat /proc/bootconfig 2>/dev/null'" | tr -d '\r' | awk '
       /^androidboot[.]/ { key=$1; sub(/^[^=]*=[[:space:]]*/, ""); gsub(/["[:space:]]/, ""); print key "=" $0 }' | tr '\n' ' ')"
     normal_args="$bootconfig_args androidboot.force_normal_boot=1 androidboot.mode=normal androidboot.bootmode=normal androidboot.slot_suffix=$slot_suffix androidboot.hardware=mt6895 androidboot.init_fatal_panic=true androidboot.init_fatal_reboot_target=bootloader firmware_class.path=/vendor/firmware loglevel=7 ignore_loglevel printk.devkmsg=on"
-    printf '%s\n' "$base_cmdline $normal_args"
+    printf '%s\n' "$base_cmdline $normal_args $KEXEC_EXTRA_CMDLINE"
 }
 
 if [ -z "$STOCK_SERIAL" ]; then
@@ -122,7 +125,7 @@ if [ -z "$STOCK_SERIAL" ]; then
     done
 fi
 [ -n "$STOCK_SERIAL" ] || { say "failed to detect stock adb serial"; exit 5; }
-say "initrd=$INITRD dtb=${DTB_DEV:-<live>} max=$MAX lean=$LEAN_SERIAL stock=$STOCK_SERIAL panic=${PANIC_AFTER}s out=$OUT"
+say "initrd=$INITRD dtb=${DTB_DEV:-<live>} max=$MAX lean=$LEAN_SERIAL stock=$STOCK_SERIAL panic=${PANIC_AFTER}s kexec_extra_cmdline=${KEXEC_EXTRA_CMDLINE:-<none>} out=$OUT"
 
 noexec=0
 for r in $(seq 1 "$MAX"); do

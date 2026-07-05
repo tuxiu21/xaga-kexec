@@ -51,7 +51,7 @@ if [ "$CHECK_CONFIG_ONLY" = "1" ]; then
   KERNEL_DIST_DIR="$OUT/config-dist"
   KERNEL_CONFIG_PATH="$KERNEL_OUT_DIR/common/.config"
 else
-  KERNEL_CONFIG_PATH="$KERNEL_OUT_DIR/.config"
+  KERNEL_CONFIG_PATH="$KERNEL_OUT_DIR/common/.config"
 fi
 
 say() {

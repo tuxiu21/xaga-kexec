@@ -72,6 +72,14 @@ after kexec.
   `/etc/wpa_supplicant/wpa_supplicant-wlan0.conf` exists.
 - OpenSSH server is installed and enabled in the Ubuntu rootfs. It uses the
   root account's `/root/.ssh/authorized_keys` and disables password login.
+- The Docker-oriented GKI config fragment enables overlayfs, bridge netfilter,
+  legacy iptables NAT, and nftables support. A kernel built from this fragment
+  has been kexec-booted into Ubuntu with `iptables-nft`, `nft list ruleset`,
+  `systemctl start docker`, and `docker run --rm hello-world` all passing.
+- The Ubuntu rootfs currently uses `mihomo.service` for the Clash/Mihomo
+  subscription path. HTTP and SOCKS proxies listen on `127.0.0.1:7890` and
+  `127.0.0.1:7891`; the Web UI listens on port `9090` and should keep a
+  non-empty API secret when exposed beyond loopback.
 
 ## Safety Notes
 
@@ -224,6 +232,33 @@ bash scripts/host/build_blocktag_ko.sh
 bash scripts/host/build_patched_mbox_initrd.sh
 ```
 
+`build_gki_logged.sh` loads `common/build.config.docker` by default. That
+fragment merges `arch/arm64/configs/docker_gki.fragment` and
+`arch/arm64/configs/kexec_ubuntu.fragment`, so the default GKI build includes
+the Ubuntu/kexec baseline plus Docker-facing options such as:
+
+```text
+CONFIG_DEVTMPFS=y
+CONFIG_OVERLAY_FS=y
+CONFIG_BRIDGE_NETFILTER=y
+CONFIG_IP_NF_NAT=y
+CONFIG_IP_NF_TARGET_MASQUERADE=y
+CONFIG_NF_TABLES=y
+CONFIG_NF_TABLES_INET=y
+CONFIG_NFT_COMPAT=y
+CONFIG_NFT_NAT=y
+CONFIG_NFT_MASQ=y
+CONFIG_NFT_REJECT=y
+```
+
+Use config assertions when changing kernel fragments:
+
+```bash
+CHECK_CONFIG_ONLY=1 \
+REQUIRED_KERNEL_CONFIGS='CONFIG_NF_TABLES=y CONFIG_NFT_NAT=y CONFIG_DEVTMPFS=y' \
+  bash scripts/host/build_gki_logged.sh
+```
+
 ## Install
 
 Install or refresh the Ubuntu rootfs:
@@ -278,6 +313,26 @@ USB/adbd sampler
 optional Wi-Fi module bring-up
 wpa_supplicant@wlan0 and systemd-networkd networking
 OpenSSH server
+```
+
+Docker is usable in the Ubuntu rootfs with the Docker GKI fragment above. The
+last validated path used `iptables-nft` on the kexec kernel:
+
+```sh
+update-alternatives --set iptables /usr/sbin/iptables-nft
+update-alternatives --set ip6tables /usr/sbin/ip6tables-nft
+iptables -t nat -L
+nft list ruleset
+systemctl start docker
+docker run --rm hello-world
+```
+
+If booted into an older kernel without `CONFIG_NF_TABLES`, switch back to
+legacy iptables instead:
+
+```sh
+update-alternatives --set iptables /usr/sbin/iptables-legacy
+update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
 ```
 
 For package maintenance in this kexec rootfs, keep the Ubuntu kernel packages
@@ -371,6 +426,10 @@ ADB=adb.exe STOCK_SERIAL=U89PBYJBFQKNLZEY UBUNTU_WIFI=0 PANIC_AFTER=180 \
   work/output/combined_ramdisk_kexec_system_mbox.lz4 4
 ```
 
+The kexec test scripts append `slub_debug=FZPU init_on_free=1` by default while
+debugging early Ubuntu instability. Override with `KEXEC_EXTRA_CMDLINE=...`, or
+set `KEXEC_EXTRA_CMDLINE=` to disable the extra debug parameters for an A/B run.
+
 Success marker:
 
 ```text
@@ -403,6 +462,15 @@ In Ubuntu, systemd unit state is the primary runtime view:
 systemctl status kexec-adbd.service kexec-wifi.service \
   wpa_supplicant@wlan0.service systemd-networkd.service ssh.service
 journalctl -u kexec-wifi.service -u wpa_supplicant@wlan0.service -b --no-pager
+```
+
+For the user-space proxy and container stack:
+
+```sh
+systemctl status mihomo.service docker.service containerd.service
+journalctl -u mihomo.service -u docker.service -b --no-pager
+curl -I -x http://127.0.0.1:7890 https://www.google.com
+docker info
 ```
 
 From stock Android after reboot:
@@ -477,8 +545,9 @@ ap0
 ```
 
 After `wlan0` exists, Ubuntu uses the normal
-`wpa_supplicant@wlan0.service` plus `systemd-networkd` path. Create the AP
-configuration once:
+`wpa_supplicant@wlan0.service` plus `systemd-networkd` path. The installed
+systemd network/link files set DHCP for `wlan0` and pin a stable MAC address
+before association. Create the AP configuration once:
 
 ```sh
 wpa_passphrase "SSID" "passphrase" > /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
@@ -538,8 +607,10 @@ boot_ubuntu_rootfs -> /sbin/init -> multi-user.target
 ```
 
 The old phase-A PID 1 and `kexec-phase-a.service` compatibility path has been
-removed. Use the lean runtime as the rescue path if Ubuntu systemd does not
-come up.
+removed. Some split systemd units still invoke `/lean/ubuntu_phase_a_init.sh`
+for historical helper subcommands such as `adbd`, `time-keeper`, and
+`panic-timer`; it is no longer the Ubuntu PID 1 fallback. Use the lean runtime
+as the rescue path if Ubuntu systemd does not come up.
 
 ## Layout
 
@@ -563,5 +634,5 @@ validate repeated systemd split-unit Ubuntu boots
 add and validate production wlan0 AP credentials
 qualify wlan0 as the production Wi-Fi 6 data plane under sustained TCP load
 identify or disable the unstable WLAN/MDDP/skb path seen during package downloads
-validate Docker bridge/NAT and networked containers
+broaden Docker validation beyond hello-world to long-running bridge/NAT workloads
 ```

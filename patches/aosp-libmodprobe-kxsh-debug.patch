@@ -1,0 +1,213 @@
+diff --git a/system/core/libmodprobe/libmodprobe.cpp b/system/core/libmodprobe/libmodprobe.cpp
+index 1a9d3642c2..bfc4ef62be 100644
+--- a/system/core/libmodprobe/libmodprobe.cpp
++++ b/system/core/libmodprobe/libmodprobe.cpp
+@@ -336,6 +336,25 @@ Modprobe::Modprobe(const std::vector<std::string>& base_paths, const std::string
+ 
+         auto blocklist_callback = std::bind(&Modprobe::ParseBlocklistCallback, this, _1);
+         ParseCfg(base_path + "/modules.blocklist", blocklist_callback);
++
++        auto dep = module_deps_.find("mt6375_charger");
++        auto load_has_charger =
++                std::find(module_load_.begin(), module_load_.end(), "mt6375_charger") !=
++                module_load_.end();
++        LOG(INFO) << "kxsh-modprobe-debug: base_path=" << base_path << " load_file=" << load_file
++                  << " load_count=" << module_load_.size()
++                  << " deps_count=" << module_deps_.size()
++                  << " aliases_count=" << module_aliases_.size()
++                  << " has_load_mt6375_charger=" << load_has_charger
++                  << " has_dep_mt6375_charger=" << (dep != module_deps_.end());
++        if (dep != module_deps_.end()) {
++            std::string deps;
++            for (const auto& item : dep->second) {
++                if (!deps.empty()) deps += ",";
++                deps += item;
++            }
++            LOG(INFO) << "kxsh-modprobe-debug: mt6375_charger deps=" << deps;
++        }
+     }
+ 
+     ParseKernelCmdlineOptions();
+@@ -360,10 +379,20 @@ bool Modprobe::InsmodWithDeps(const std::string& module_name, const std::string&
+         LOG(ERROR) << "Module " << module_name << " not in dependency file";
+         return false;
+     }
++    std::string deps_chain;
++    for (const auto& dep : dependencies) {
++        if (!deps_chain.empty()) deps_chain += ",";
++        deps_chain += dep;
++    }
++    LOG(INFO) << "kxsh-modprobe-debug: InsmodWithDeps module=" << module_name
++              << " dep_count=" << dependencies.size()
++              << " deps_chain=" << deps_chain
++              << " parameters='" << parameters << "'";
+ 
+     // load module dependencies in reverse order
+     for (auto dep = dependencies.rbegin(); dep != dependencies.rend() - 1; ++dep) {
+-        LOG(VERBOSE) << "Loading hard dep for '" << module_name << "': " << *dep;
++        LOG(INFO) << "kxsh-modprobe-debug: hard_dep parent=" << module_name
++                  << " dep=" << *dep;
+         if (!LoadWithAliases(*dep, true)) {
+             return false;
+         }
+@@ -372,12 +401,15 @@ bool Modprobe::InsmodWithDeps(const std::string& module_name, const std::string&
+     // try to load soft pre-dependencies
+     for (const auto& [module, softdep] : module_pre_softdep_) {
+         if (module_name == module) {
+-            LOG(VERBOSE) << "Loading soft pre-dep for '" << module << "': " << softdep;
++            LOG(INFO) << "kxsh-modprobe-debug: soft_pre_dep parent=" << module
++                      << " dep=" << softdep;
+             LoadWithAliases(softdep, false);
+         }
+     }
+ 
+     // load target module itself with args
++    LOG(INFO) << "kxsh-modprobe-debug: target module=" << module_name
++              << " path=" << dependencies[0];
+     if (!Insmod(dependencies[0], parameters)) {
+         return false;
+     }
+@@ -385,7 +417,8 @@ bool Modprobe::InsmodWithDeps(const std::string& module_name, const std::string&
+     // try to load soft post-dependencies
+     for (const auto& [module, softdep] : module_post_softdep_) {
+         if (module_name == module) {
+-            LOG(VERBOSE) << "Loading soft post-dep for '" << module << "': " << softdep;
++            LOG(INFO) << "kxsh-modprobe-debug: soft_post_dep parent=" << module
++                      << " dep=" << softdep;
+             LoadWithAliases(softdep, false);
+         }
+     }
+@@ -396,7 +429,14 @@ bool Modprobe::InsmodWithDeps(const std::string& module_name, const std::string&
+ bool Modprobe::LoadWithAliases(const std::string& module_name, bool strict,
+                                const std::string& parameters) {
+     auto canonical_name = MakeCanonical(module_name);
++    if (canonical_name == "mt6375_charger" || module_name.find("mt6375") != std::string::npos) {
++        LOG(INFO) << "kxsh-modprobe-debug: LoadWithAliases request=" << module_name
++                  << " canonical=" << canonical_name << " strict=" << strict;
++    }
+     if (module_loaded_.count(canonical_name)) {
++        if (canonical_name == "mt6375_charger") {
++            LOG(INFO) << "kxsh-modprobe-debug: mt6375_charger already marked loaded";
++        }
+         return true;
+     }
+ 
+@@ -408,12 +448,20 @@ bool Modprobe::LoadWithAliases(const std::string& module_name, bool strict,
+     for (const auto& [alias, aliased_module] : module_aliases_) {
+         if (fnmatch(alias.c_str(), module_name.c_str(), 0) != 0) continue;
+         LOG(VERBOSE) << "Found alias for '" << module_name << "': '" << aliased_module;
++        if (canonical_name == "mt6375_charger" || aliased_module.find("mt6375") != std::string::npos) {
++            LOG(INFO) << "kxsh-modprobe-debug: alias match request=" << module_name
++                      << " alias=" << alias << " aliased_module=" << aliased_module;
++        }
+         if (module_loaded_.count(MakeCanonical(aliased_module))) continue;
+         modules_to_load.emplace(aliased_module);
+     }
+ 
+     // attempt to load all modules aliased to this name
+     for (const auto& module : modules_to_load) {
++        if (canonical_name == "mt6375_charger" || module.find("mt6375") != std::string::npos) {
++            LOG(INFO) << "kxsh-modprobe-debug: candidate request=" << module_name
++                      << " candidate=" << module;
++        }
+         if (!ModuleExists(module)) continue;
+         if (InsmodWithDeps(module, parameters)) module_loaded = true;
+     }
+diff --git a/system/core/libmodprobe/libmodprobe_ext.cpp b/system/core/libmodprobe/libmodprobe_ext.cpp
+index fb1f5e73ef..1b461af1dd 100644
+--- a/system/core/libmodprobe/libmodprobe_ext.cpp
++++ b/system/core/libmodprobe/libmodprobe_ext.cpp
+@@ -23,6 +23,8 @@
+ 
+ #include <modprobe/modprobe.h>
+ 
++static int g_kxsh_modprobe_insmod_seq = 0;
++
+ std::string Modprobe::GetKernelCmdline(void) {
+     std::string cmdline;
+     if (!android::base::ReadFileToString("/proc/cmdline", &cmdline)) {
+@@ -32,14 +34,22 @@ std::string Modprobe::GetKernelCmdline(void) {
+ }
+ 
+ bool Modprobe::Insmod(const std::string& path_name, const std::string& parameters) {
++    int seq = ++g_kxsh_modprobe_insmod_seq;
++    auto canonical_name = MakeCanonical(path_name);
++    LOG(INFO) << "kxsh-modprobe-debug: insmod seq=" << seq
++              << " begin module=" << canonical_name
++              << " path=" << path_name
++              << " parameters='" << parameters << "'";
+     android::base::unique_fd fd(
+             TEMP_FAILURE_RETRY(open(path_name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC)));
+     if (fd == -1) {
++        PLOG(ERROR) << "kxsh-modprobe-debug: insmod seq=" << seq
++                    << " open_failed module=" << canonical_name
++                    << " path=" << path_name;
+         PLOG(ERROR) << "Could not open module '" << path_name << "'";
+         return false;
+     }
+ 
+-    auto canonical_name = MakeCanonical(path_name);
+     std::string options = "";
+     auto options_iter = module_options_.find(canonical_name);
+     if (options_iter != module_options_.end()) {
+@@ -50,18 +60,32 @@ bool Modprobe::Insmod(const std::string& path_name, const std::string& parameter
+     }
+ 
+     LOG(INFO) << "Loading module " << path_name << " with args '" << options << "'";
++    LOG(INFO) << "kxsh-modprobe-debug: insmod seq=" << seq
++              << " finit_module module=" << canonical_name
++              << " path=" << path_name
++              << " options='" << options << "'";
+     int ret = syscall(__NR_finit_module, fd.get(), options.c_str(), 0);
+     if (ret != 0) {
+         if (errno == EEXIST) {
+             // Module already loaded
++            LOG(INFO) << "kxsh-modprobe-debug: insmod seq=" << seq
++                      << " eexist module=" << canonical_name
++                      << " path=" << path_name;
+             module_loaded_.emplace(canonical_name);
+             return true;
+         }
++        PLOG(ERROR) << "kxsh-modprobe-debug: insmod seq=" << seq
++                    << " failed module=" << canonical_name
++                    << " path=" << path_name
++                    << " options='" << options << "'";
+         PLOG(ERROR) << "Failed to insmod '" << path_name << "' with args '" << options << "'";
+         return false;
+     }
+ 
+     LOG(INFO) << "Loaded kernel module " << path_name;
++    LOG(INFO) << "kxsh-modprobe-debug: insmod seq=" << seq
++              << " ok module=" << canonical_name
++              << " path=" << path_name;
+     module_loaded_.emplace(canonical_name);
+     module_count_++;
+     return true;
+@@ -87,15 +111,26 @@ bool Modprobe::ModuleExists(const std::string& module_name) {
+     auto deps = GetDependencies(module_name);
+     if (deps.empty()) {
+         // missing deps can happen in the case of an alias
++        if (module_name == "mt6375_charger" || module_name.find("mt6375") != std::string::npos) {
++            LOG(INFO) << "kxsh-modprobe-debug: ModuleExists no deps module=" << module_name;
++        }
+         return false;
+     }
+     if (stat(deps.front().c_str(), &fileStat)) {
+-        LOG(INFO) << "module " << module_name << " does not exist";
++        PLOG(INFO) << "module " << module_name << " does not exist";
++        LOG(INFO) << "kxsh-modprobe-debug: ModuleExists stat failed module=" << module_name
++                  << " path=" << deps.front() << " dep_count=" << deps.size();
+         return false;
+     }
+     if (!S_ISREG(fileStat.st_mode)) {
+         LOG(INFO) << "module " << module_name << " is not a regular file";
++        LOG(INFO) << "kxsh-modprobe-debug: ModuleExists non-regular module=" << module_name
++                  << " path=" << deps.front() << " mode=" << fileStat.st_mode;
+         return false;
+     }
++    if (module_name == "mt6375_charger" || module_name.find("mt6375") != std::string::npos) {
++        LOG(INFO) << "kxsh-modprobe-debug: ModuleExists ok module=" << module_name
++                  << " path=" << deps.front() << " dep_count=" << deps.size();
++    }
+     return true;
+ }

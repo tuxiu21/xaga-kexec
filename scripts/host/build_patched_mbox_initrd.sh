@@ -15,6 +15,7 @@ RAMDISK_KXSH="${RAMDISK_KXSH:-$OUTPUT_DIR/ramdisk_kxshbin}"
 INIT_KXSH="${INIT_KXSH:-$ROOT/prebuilt/init_first_stage_kxsh}"
 WIFI_FIRMWARE_DIR="${WIFI_FIRMWARE_DIR:-}"
 WIFI_RAMDISK_FIRMWARE="${WIFI_RAMDISK_FIRMWARE:-conninfra.cfg soc7_0_ram_wmmcu_1b_t_1_hdr.bin wifi.cfg WIFI_RAM_CODE_soc7_0_1b_t_1.bin}"
+EXCLUDE_VENDOR_RAMDISK_MODULES="${EXCLUDE_VENDOR_RAMDISK_MODULES:-monitor_hang aee_hangdet}"
 
 if [ -n "$WIFI_FIRMWARE_DIR" ]; then
   WIFI_FIRMWARE_DIR="$(realpath -m "$WIFI_FIRMWARE_DIR")"
@@ -59,6 +60,12 @@ mkdir -p "$work/vendor_root"
   cd "$work/vendor_root"
   cpio -idm < "$VENDOR_CPIO" >/dev/null 2>&1
   rm -f init
+  for mod in $EXCLUDE_VENDOR_RAMDISK_MODULES; do
+    sed -i "/^${mod}\\.ko$/d" lib/modules/modules.load 2>/dev/null || true
+    sed -i "/^${mod}\\.ko$/d" lib/modules/modules.load.recovery 2>/dev/null || true
+    sed -i "\\#^/lib/modules/${mod}\\.ko:#d" lib/modules/modules.dep 2>/dev/null || true
+    rm -f "lib/modules/${mod}.ko"
+  done
   cp "$OUT/mtk-mbox.stripped.ko" lib/modules/mtk-mbox.ko
   if [ -s "$BLOCKTAG_KO" ]; then
     cp "$BLOCKTAG_KO" lib/modules/blocktag.ko

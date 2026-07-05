@@ -5,6 +5,7 @@ LINUX_MOUNT="${LINUX_MOUNT:-/mnt/linux_kexec}"
 LEAN_DIR="${LEAN_DIR:-$LINUX_MOUNT/lean}"
 PANIC_AFTER="${PANIC_AFTER:-900}"
 UBUNTU_WIFI="${UBUNTU_WIFI:-1}"
+UBUNTU_WIFI_SKIP_MODULES="${UBUNTU_WIFI_SKIP_MODULES:-}"
 
 SYSTEMD_DIR="$LINUX_MOUNT/etc/systemd/system"
 MULTI_USER_WANTS="$SYSTEMD_DIR/multi-user.target.wants"
@@ -27,6 +28,7 @@ rm -f \
 : > "$LEAN_DIR/wifi_load_progress.txt"
 : > "$LEAN_DIR/dmesg_wifi_before.log"
 : > "$LEAN_DIR/dmesg_wifi_after.log"
+rm -f "$LEAN_DIR/wifi_skip_modules"
 
 rm -f \
     "$LEAN_DIR/run/adbd.ubuntu.pid" \
@@ -78,6 +80,9 @@ ln -sf /dev/null "$SYSTEMD_DIR/systemd-networkd-wait-online.service"
 
 echo "$PANIC_AFTER" > "$LEAN_DIR/panic_after"
 echo "$UBUNTU_WIFI" > "$LEAN_DIR/ubuntu_wifi"
+if [ -n "$UBUNTU_WIFI_SKIP_MODULES" ]; then
+    echo "$UBUNTU_WIFI_SKIP_MODULES" > "$LEAN_DIR/wifi_skip_modules"
+fi
 touch "$LEAN_DIR/boot_ubuntu_rootfs.once"
 
 sync

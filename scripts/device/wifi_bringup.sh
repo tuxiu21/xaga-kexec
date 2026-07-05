@@ -24,6 +24,10 @@ FIRMWARE_DIR="${WIFI_FIRMWARE_DIR:-/vendor/firmware}"
 POWER_WAIT_SECS="${WIFI_POWER_WAIT_SECS:-240}"
 POLL_SECS=5
 DIRS="/vendor_dlkm/lib/modules /vendor/lib/modules"
+WIFI_SKIP_MODULES="${WIFI_SKIP_MODULES:-}"
+if [ -s "$BASE/wifi_skip_modules" ]; then
+    WIFI_SKIP_MODULES="$("$BB" cat "$BASE/wifi_skip_modules" 2>/dev/null || echo "$WIFI_SKIP_MODULES")"
+fi
 
 MODULE_ORDER="mtk-mbox mtk_rpmsg_mbox mtk_tinysys_ipi mtk-ssc
 connadp
@@ -33,6 +37,16 @@ connscp
 mtk_low_battery_throttling mtk_dynamic_loading_throttling mtk_mdpm mtk_pbm
 ccci_util_lib ccci_auxadc rps_perf ccmni ccci_md_all
 conninfra connfem wmt_chrdev_wifi_connac2 mddp wlan_drv_gen4m_6895"
+
+skip_module()
+{
+    needle="$1"
+
+    for mod in $WIFI_SKIP_MODULES; do
+        [ "$mod" = "$needle" ] && return 0
+    done
+    return 1
+}
 
 log_step()
 {
@@ -203,10 +217,16 @@ wait_for_wifi_ready()
     : > "$DMESG_AFTER"
 
     echo "## module search dirs: $DIRS"
+    echo "## skipped modules: ${WIFI_SKIP_MODULES:-<none>}"
     ensure_vendor_mounts
     setup_firmware_path
 
     for ko in $MODULE_ORDER; do
+        if skip_module "$ko"; then
+            echo "  skip  $ko"
+            log_step "SKIP_$ko"
+            continue
+        fi
         load_module "$ko"
     done
     log_step "MODULES_DONE"

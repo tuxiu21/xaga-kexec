@@ -38,6 +38,22 @@ cleanup()
 }
 trap cleanup EXIT
 
+# These vendor debug/hang-detect modules leave long-lived D-state kernel
+# threads after kexec. They are not needed for the Ubuntu handoff and should not
+# be runtime-unloaded once booted.
+EXCLUDE_VENDOR_RAMDISK_MODULES="${EXCLUDE_VENDOR_RAMDISK_MODULES:-device-apc-mt6895 monitor_hang aee_hangdet}"
+
+drop_vendor_ramdisk_modules()
+{
+  local mod
+
+  for mod in $EXCLUDE_VENDOR_RAMDISK_MODULES; do
+    sed -i "/^${mod}\\.ko$/d" modules.load
+    sed -i "/^${mod}\\.ko$/d" modules.load.recovery
+    sed -i "\\#^/lib/modules/${mod}\\.ko:#d" modules.dep
+  done
+}
+
 cd "$work"
 cp "$VENDOR_DIR/ramdisk.cpio" ramdisk.cpio
 
@@ -54,12 +70,13 @@ magiskboot cpio ramdisk.cpio \
   'extract lib/modules/modules.load.recovery modules.load.recovery' \
   'extract lib/modules/modules.dep modules.dep'
 
-sed -i '/^device-apc-mt6895\.ko$/d' modules.load
-sed -i '/^device-apc-mt6895\.ko$/d' modules.load.recovery
-sed -i '\#^/lib/modules/device-apc-mt6895\.ko:#d' modules.dep
+drop_vendor_ramdisk_modules
+
+for mod in $EXCLUDE_VENDOR_RAMDISK_MODULES; do
+  magiskboot cpio ramdisk.cpio "rm lib/modules/${mod}.ko" >/dev/null 2>&1 || true
+done
 
 magiskboot cpio ramdisk.cpio \
-  'rm lib/modules/device-apc-mt6895.ko' \
   'add 0644 lib/modules/modules.load modules.load' \
   'add 0644 lib/modules/modules.load.recovery modules.load.recovery' \
   'add 0644 lib/modules/modules.dep modules.dep'

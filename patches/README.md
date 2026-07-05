@@ -47,3 +47,24 @@ aarch64-linux-gnu-gcc -static -Os -s -o work/output/ramdisk_kxshbin src/system_k
 ```
 
 Override with `RAMDISK_KXSH=/path/to/kxshbin` when testing another bootstrap.
+
+## `aosp-libmodprobe-kxsh-debug.patch`
+
+Applies to `sources/android-12.1` / AOSP Android 12.1 `system/core/libmodprobe`.
+
+This is a diagnostic patch for intermittent first-stage module load failures.
+It logs the parsed module load/dependency/alias state, the full dependency
+walk, and every `finit_module()` attempt as `begin` / `ok` / `failed` /
+`eexist` records under the `kxsh-modprobe-debug` tag. It also keeps focused
+`mt6375_charger` alias/existence logging for the earlier charger failure mode.
+
+Rebuild the prebuilt init after applying it:
+
+```sh
+cd sources/android-12.1
+patch -p1 < ../../patches/aosp-libmodprobe-kxsh-debug.patch
+source build/envsetup.sh
+lunch aosp_arm64-eng
+m -j4 init_first_stage
+cp out/target/product/generic_arm64/ramdisk/init ../../prebuilt/init_first_stage_kxsh
+```

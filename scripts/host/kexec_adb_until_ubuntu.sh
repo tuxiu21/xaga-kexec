@@ -12,7 +12,9 @@ MAX="${2:-8}"
 UBUNTU_SERIAL="${UBUNTU_SERIAL:-ubuntu012345678}"
 LEAN_SERIAL="${LEAN_SERIAL:-0123456789abcdef}"
 PANIC_AFTER="${PANIC_AFTER:-900}"
+KEXEC_EXTRA_CMDLINE="${KEXEC_EXTRA_CMDLINE-slub_debug=FZPU init_on_free=1}"
 UBUNTU_WIFI="${UBUNTU_WIFI:-1}"
+UBUNTU_WIFI_SKIP_MODULES="${UBUNTU_WIFI_SKIP_MODULES:-}"
 UBUNTU_WIFI_WAIT_READY="${UBUNTU_WIFI_WAIT_READY:-1}"
 UBUNTU_WIFI_WAIT="${UBUNTU_WIFI_WAIT:-260}"
 NOEXEC_MAX="${NOEXEC_MAX:-3}"
@@ -58,6 +60,7 @@ prepare_ubuntu_boot()
         fi
         PANIC_AFTER='$PANIC_AFTER' \
         UBUNTU_WIFI='$UBUNTU_WIFI' \
+        UBUNTU_WIFI_SKIP_MODULES='$UBUNTU_WIFI_SKIP_MODULES' \
         LINUX_MOUNT='$LINUX_MOUNT' \
         LEAN_DIR='$LEAN_DIR' \
             '$LEAN_DIR/prepare_ubuntu_kexec_boot.sh'
@@ -199,6 +202,8 @@ build_cmdline() {
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )debug_ext\\.initrd_size=[^ ]*/ /g")"
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )firmware_class\\.path=[^ ]*/ /g")"
         base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )arm64\\.nomte( |$)/ /g")"
+        base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )slub_debug=[^ ]*/ /g")"
+        base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )init_on_free=[^ ]*/ /g")"
         base_cmdline="$base_cmdline debug_ext.initrd_size=$initrd_kib"
     fi
     # Preserve the active Android slot in the synthetic kexec cmdline.
@@ -207,7 +212,7 @@ build_cmdline() {
     bootconfig_args="$($ADB shell "su -c 'cat /proc/bootconfig 2>/dev/null'" | tr -d '\r' | awk '
       /^androidboot[.]/ { key=$1; sub(/^[^=]*=[[:space:]]*/, ""); gsub(/["[:space:]]/, ""); print key "=" $0 }' | tr '\n' ' ')"
     normal_args="$bootconfig_args androidboot.force_normal_boot=1 androidboot.mode=normal androidboot.bootmode=normal androidboot.slot_suffix=$slot_suffix androidboot.hardware=mt6895 androidboot.init_fatal_panic=true androidboot.init_fatal_reboot_target=bootloader firmware_class.path=/vendor/firmware loglevel=7 ignore_loglevel printk.devkmsg=on"
-    printf '%s\n' "$base_cmdline $normal_args"
+    printf '%s\n' "$base_cmdline $normal_args $KEXEC_EXTRA_CMDLINE"
 }
 
 print_ubuntu_logs() {
@@ -238,7 +243,7 @@ print_ubuntu_logs() {
 if [ -z "$STOCK_SERIAL" ]; then
     STOCK_SERIAL="$(detect_stock_serial)"
 fi
-say "initrd=$INITRD dtb=${DTB_DEV:-<live>} max=$MAX ubuntu=$UBUNTU_SERIAL stock=$STOCK_SERIAL panic=${PANIC_AFTER}s wifi=${UBUNTU_WIFI} wait_wifi_ready=${UBUNTU_WIFI_WAIT_READY} wifi_wait=${UBUNTU_WIFI_WAIT}s out=$OUT"
+say "initrd=$INITRD dtb=${DTB_DEV:-<live>} max=$MAX ubuntu=$UBUNTU_SERIAL stock=$STOCK_SERIAL panic=${PANIC_AFTER}s kexec_extra_cmdline=${KEXEC_EXTRA_CMDLINE:-<none>} wifi=${UBUNTU_WIFI} wifi_skip=${UBUNTU_WIFI_SKIP_MODULES:-<none>} wait_wifi_ready=${UBUNTU_WIFI_WAIT_READY} wifi_wait=${UBUNTU_WIFI_WAIT}s out=$OUT"
 
 if ubuntu_up; then
     say "already on Ubuntu ADB; probing current root"
