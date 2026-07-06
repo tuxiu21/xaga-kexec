@@ -153,7 +153,7 @@ prepare_accounts()
     fi
 }
 
-start_watchdog_feeder()
+start_watchdog()
 {
     for node in /sys/class/watchdog/watchdog*/dev; do
         [ -r "$node" ] || continue
@@ -171,19 +171,13 @@ start_watchdog_feeder()
         [ -e /dev/watchdog ] || "$BB" ln -s "/dev/$name" /dev/watchdog 2>/dev/null
     done
 
-    if [ -x "$DATA_BASE/watchdog_feeder" ]; then
-        "$DATA_BASE/watchdog_feeder" 5 &
-        log "watchdog C feeder started pid=$!"
-        return 0
-    fi
-
     (
         while true; do
             [ -e /dev/watchdog0 ] && echo V > /dev/watchdog0 2>/dev/null
             "$BB" sleep 5
         done
     ) &
-    log "watchdog shell feeder started"
+    log "watchdog shell started"
 }
 
 cleanup_usb_before_panic()
@@ -441,7 +435,7 @@ log "entered $DATA_BASE/kxsh.sh"
 prepare_base
 ensure_reasonable_time
 prepare_accounts
-start_watchdog_feeder
+start_watchdog
 start_panic_timer
 
 if [ -f "$DATA_BASE/boot_ubuntu_rootfs.once" ]; then

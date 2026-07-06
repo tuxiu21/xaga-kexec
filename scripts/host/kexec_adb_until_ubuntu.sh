@@ -12,7 +12,7 @@ MAX="${2:-8}"
 UBUNTU_SERIAL="${UBUNTU_SERIAL:-ubuntu012345678}"
 LEAN_SERIAL="${LEAN_SERIAL:-0123456789abcdef}"
 PANIC_AFTER="${PANIC_AFTER:-900}"
-KEXEC_EXTRA_CMDLINE="${KEXEC_EXTRA_CMDLINE-slub_debug=FZPU init_on_free=1}"
+KEXEC_EXTRA_CMDLINE="${KEXEC_EXTRA_CMDLINE:-}"
 UBUNTU_WIFI="${UBUNTU_WIFI:-1}"
 UBUNTU_WIFI_SKIP_MODULES="${UBUNTU_WIFI_SKIP_MODULES:-}"
 UBUNTU_WIFI_WAIT_READY="${UBUNTU_WIFI_WAIT_READY:-1}"
@@ -70,7 +70,7 @@ prepare_ubuntu_boot()
 probe_ubuntu_root() {
     local out="$1"
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" wait-for-device >/dev/null 2>&1 || return 1
-    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'echo adb-probe; cat /proc/1/comm 2>/dev/null; findmnt / 2>/dev/null || mount | grep " on / "; cat /etc/os-release 2>/dev/null || true; ps -ef | grep -E "adbd|watchdog_feeder|phase_a" | grep -v grep || true' > "$out.tmp" 2>&1 || return 1
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'echo adb-probe; cat /proc/1/comm 2>/dev/null; findmnt / 2>/dev/null || mount | grep " on / "; cat /etc/os-release 2>/dev/null || true; ps -ef | grep -E "adbd|watchdog|kexec-" | grep -v grep || true' > "$out.tmp" 2>&1 || return 1
     tr -d '\r' < "$out.tmp" > "$out"
     rm -f "$out.tmp"
     grep -qa 'ID=ubuntu' "$out"

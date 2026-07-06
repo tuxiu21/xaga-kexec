@@ -426,9 +426,9 @@ ADB=adb.exe STOCK_SERIAL=U89PBYJBFQKNLZEY UBUNTU_WIFI=0 PANIC_AFTER=180 \
   work/output/combined_ramdisk_kexec_system_mbox.lz4 4
 ```
 
-The kexec test scripts append `slub_debug=FZPU init_on_free=1` by default while
-debugging early Ubuntu instability. Override with `KEXEC_EXTRA_CMDLINE=...`, or
-set `KEXEC_EXTRA_CMDLINE=` to disable the extra debug parameters for an A/B run.
+The kexec test scripts do not append extra debug memory parameters by default.
+Use `KEXEC_EXTRA_CMDLINE='slub_debug=FZPU init_on_free=1'` only for an explicit
+debug run; those options have exposed early userspace instability on this stack.
 
 Success marker:
 
@@ -472,6 +472,34 @@ journalctl -u mihomo.service -u docker.service -b --no-pager
 curl -I -x http://127.0.0.1:7890 https://www.google.com
 docker info
 ```
+
+Watchdog mode is controlled by `/etc/xaga-watchdog.conf` in the Ubuntu rootfs.
+Both modes use the shell watchdog loop in `/lean/lib/kexec/watchdog.sh`; the old
+C watchdog feeder is no longer installed. Keep development sessions in the
+default unconditional shell feed mode:
+
+```sh
+WATCHDOG_MODE=dev
+WATCHDOG_DRY_RUN=1
+```
+
+For unattended burn-in, switch to gated dry-run first. This keeps kicking the
+MTK hardware watchdog but records whether health checks would have stopped
+feeding it:
+
+```sh
+WATCHDOG_MODE=unattended
+WATCHDOG_DRY_RUN=1
+WATCHDOG_HEALTH_URLS="https://your-health-endpoint.example/ping"
+systemctl restart kexec-watchdog.service
+cat /lean/run/watchdog_health.status
+journalctl -u kexec-watchdog.service -b --no-pager
+```
+
+Only after a clean 24-48 hour dry-run should `WATCHDOG_DRY_RUN=0` be used. In
+that mode, repeated health-check failures make the watchdog service hold
+`/dev/watchdog0` open and stop kicking it, leaving the hardware watchdog to
+reset the device.
 
 From stock Android after reboot:
 
@@ -606,17 +634,18 @@ The active Ubuntu boot path is intentionally single-path:
 boot_ubuntu_rootfs -> /sbin/init -> multi-user.target
 ```
 
-The old phase-A PID 1 and `kexec-phase-a.service` compatibility path has been
-removed. Some split systemd units still invoke `/lean/ubuntu_phase_a_init.sh`
-for historical helper subcommands such as `adbd`, `time-keeper`, and
-`panic-timer`; it is no longer the Ubuntu PID 1 fallback. Use the lean runtime
-as the rescue path if Ubuntu systemd does not come up.
+The old phase-A PID 1, `kexec-phase-a.service`, and
+`/lean/ubuntu_phase_a_init.sh` helper entrypoint have been removed. Split
+systemd units now execute dedicated `/lean/bin/kexec-*` helpers directly. Use
+the lean runtime as the rescue path if Ubuntu systemd does not come up.
 
 ## Layout
 
 ```text
 src/                        static bootstrap, lean shell, watchdog, switch-root helpers
 scripts/host/               host-side build/install/boot/test helpers
+scripts/device/bin/         per-service Ubuntu kexec helper entrypoints
+scripts/device/lib/kexec/   shared helper libraries for the kexec units
 scripts/device/             device-side scripts installed into /kexec/lean
 scripts/lib/                shared host-side shell configuration
 patches/                    source patches kept outside repo-managed source trees

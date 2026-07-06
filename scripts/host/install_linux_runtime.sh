@@ -50,10 +50,6 @@ for path in "$ADBD" "$RAMDISK" "$ROOT/prebuilt/busybox" "$ROOT/prebuilt/dropbear
 done
 
 aarch64-linux-gnu-gcc -static -Os -s \
-  -o "$OUTPUT_DIR/watchdog_feeder" \
-  "$ROOT/src/watchdog_feeder.c"
-
-aarch64-linux-gnu-gcc -static -Os -s \
   -o "$OUTPUT_DIR/boot_ubuntu_rootfs" \
   "$ROOT/src/boot_ubuntu_rootfs.c"
 
@@ -65,7 +61,7 @@ cleanup()
 trap cleanup EXIT
 
 mkdir -p "$tmp/root" "$tmp/push/adblib"
-mkdir -p "$tmp/push/systemd"
+mkdir -p "$tmp/push/systemd" "$tmp/push/bin" "$tmp/push/lib"
 
 if ! magiskboot cpio "$RAMDISK" "extract system/bin/linker64 $tmp/push/linker64" >/dev/null 2>&1; then
   echo "failed to extract system/bin/linker64 from $RAMDISK" >&2
@@ -89,20 +85,23 @@ cp "$ADBD" "$tmp/push/adbd"
 cp "$ROOT/prebuilt/busybox" "$tmp/push/busybox"
 cp "$ROOT/prebuilt/dropbear" "$tmp/push/dropbear"
 cp "$ROOT/prebuilt/dropbearkey" "$tmp/push/dropbearkey"
-cp "$OUTPUT_DIR/watchdog_feeder" "$tmp/push/watchdog_feeder"
 cp "$OUTPUT_DIR/boot_ubuntu_rootfs" "$tmp/push/boot_ubuntu_rootfs"
 cp "$ROOT/src/kxsh.sh" "$tmp/push/kxsh.sh"
-cp "$ROOT/scripts/device/ubuntu_phase_a_init.sh" "$tmp/push/ubuntu_phase_a_init.sh"
 cp "$ROOT/scripts/device/prepare_ubuntu_kexec_boot.sh" "$tmp/push/prepare_ubuntu_kexec_boot.sh"
 cp "$ROOT/scripts/device/wifi_bringup.sh" "$tmp/push/wifi_bringup.sh"
+cp "$ROOT/scripts/device/xaga-watchdog.conf" "$tmp/push/xaga-watchdog.conf"
 cp "$ROOT/scripts/device/map_super_partitions.py" "$tmp/push/map_super_partitions.py"
 cp "$ROOT/scripts/device/enter_ubuntu.sh" "$tmp/push/enter-ubuntu.sh"
+cp -R "$ROOT/scripts/device/bin/." "$tmp/push/bin/"
+cp -R "$ROOT/scripts/device/lib/." "$tmp/push/lib/"
 cp -R "$ROOT/scripts/device/systemd/." "$tmp/push/systemd/"
 
 chmod 0755 "$tmp/push"/adbd "$tmp/push"/busybox "$tmp/push"/dropbear \
-  "$tmp/push"/dropbearkey "$tmp/push"/watchdog_feeder \
+  "$tmp/push"/dropbearkey \
   "$tmp/push"/boot_ubuntu_rootfs "$tmp/push"/*.sh \
-  "$tmp/push"/map_super_partitions.py "$tmp/push/linker64"
+  "$tmp/push"/map_super_partitions.py "$tmp/push/linker64" \
+  "$tmp/push"/bin/kexec-*
+chmod 0644 "$tmp/push"/lib/kexec/*.sh
 chmod 0644 "$tmp/push"/adblib/*.so
 
 wifi_modules="mtk-mbox mtk_rpmsg_mbox mtk_tinysys_ipi mtk-ssc connadp mcupm gpueb fhctl mtk-afe-external scp connscp mtk_low_battery_throttling mtk_dynamic_loading_throttling mtk_mdpm mtk_pbm ccci_util_lib ccci_auxadc rps_perf ccmni ccci_md_all conninfra connfem wmt_chrdev_wifi_connac2 mddp wlan_drv_gen4m_6895"
@@ -138,7 +137,9 @@ adb_root_shell "
   chmod 600 \"$LINUX_RUNTIME/root/.ssh/authorized_keys\" \"$LINUX_RUNTIME/shadow\" 2>/dev/null || true
   chmod 644 \"$LINUX_RUNTIME/passwd\" \"$LINUX_RUNTIME/group\"
   chmod 0755 \"$LINUX_RUNTIME\"
-  chmod 0755 \"$LINUX_RUNTIME\"/busybox \"$LINUX_RUNTIME\"/dropbear \"$LINUX_RUNTIME\"/dropbearkey \"$LINUX_RUNTIME\"/watchdog_feeder \"$LINUX_RUNTIME\"/boot_ubuntu_rootfs \"$LINUX_RUNTIME\"/kxsh.sh \"$LINUX_RUNTIME\"/ubuntu_phase_a_init.sh \"$LINUX_RUNTIME\"/prepare_ubuntu_kexec_boot.sh \"$LINUX_RUNTIME\"/wifi_bringup.sh \"$LINUX_RUNTIME\"/map_super_partitions.py \"$LINUX_RUNTIME\"/enter-ubuntu.sh \"$LINUX_RUNTIME\"/linker64 \"$LINUX_RUNTIME\"/adbd 2>/dev/null || true
+  rm -f \"$LINUX_RUNTIME/ubuntu_phase_a_init.sh\" \"$LINUX_RUNTIME/watchdog_feeder\"
+  chmod 0755 \"$LINUX_RUNTIME\"/busybox \"$LINUX_RUNTIME\"/dropbear \"$LINUX_RUNTIME\"/dropbearkey \"$LINUX_RUNTIME\"/boot_ubuntu_rootfs \"$LINUX_RUNTIME\"/kxsh.sh \"$LINUX_RUNTIME\"/prepare_ubuntu_kexec_boot.sh \"$LINUX_RUNTIME\"/wifi_bringup.sh \"$LINUX_RUNTIME\"/map_super_partitions.py \"$LINUX_RUNTIME\"/enter-ubuntu.sh \"$LINUX_RUNTIME\"/linker64 \"$LINUX_RUNTIME\"/adbd \"$LINUX_RUNTIME\"/bin/kexec-* 2>/dev/null || true
+  chmod 0644 \"$LINUX_RUNTIME\"/lib/kexec/*.sh 2>/dev/null || true
   chmod 0644 \"$LINUX_RUNTIME\"/adblib/*.so 2>/dev/null || true
   mkdir -p \"$LINUX_ROOT/etc/systemd/system\" \"$LINUX_ROOT/etc/systemd/network\" \
     \"$LINUX_ROOT/etc/systemd/system/multi-user.target.wants\" \
@@ -147,7 +148,11 @@ adb_root_shell "
   cp -R \"$LINUX_RUNTIME/systemd/\"*.service.d \"$LINUX_ROOT/etc/systemd/system/\" 2>/dev/null || true
   cp \"$LINUX_RUNTIME/systemd/\"*.network \"$LINUX_ROOT/etc/systemd/network/\" 2>/dev/null || true
   cp \"$LINUX_RUNTIME/systemd/\"*.link \"$LINUX_ROOT/etc/systemd/network/\" 2>/dev/null || true
+  if [ ! -e \"$LINUX_ROOT/etc/xaga-watchdog.conf\" ]; then
+    cp \"$LINUX_RUNTIME/xaga-watchdog.conf\" \"$LINUX_ROOT/etc/xaga-watchdog.conf\"
+  fi
   chmod 0644 \"$LINUX_ROOT/etc/systemd/system\"/kexec-*.service \"$LINUX_ROOT/etc/systemd/system\"/kexec-*.target 2>/dev/null || true
+  chmod 0644 \"$LINUX_ROOT/etc/xaga-watchdog.conf\" 2>/dev/null || true
   chmod 0644 \"$LINUX_ROOT/etc/systemd/system\"/*.service.d/*.conf \"$LINUX_ROOT/etc/systemd/network\"/*.network \"$LINUX_ROOT/etc/systemd/network\"/*.link 2>/dev/null || true
   rm -f \"$LINUX_ROOT/etc/systemd/system/kexec-phase-a.service\" \
     \"$LINUX_ROOT/etc/systemd/system/multi-user.target.wants/kexec-phase-a.service\"

@@ -6,7 +6,7 @@ Before=kexec-adbd.service kexec-wifi.service multi-user.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash /lean/ubuntu_phase_a_init.sh vendor-mount
+ExecStart=/lean/bin/kexec-vendor-mount
 RemainAfterExit=yes
 
 [Install]

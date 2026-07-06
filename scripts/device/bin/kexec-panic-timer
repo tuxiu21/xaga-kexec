@@ -1,0 +1,8 @@
+#!/bin/bash
+set -uo pipefail
+
+. /lean/lib/kexec/common.sh
+. /lean/lib/kexec/panic_timer.sh
+
+start_panic_timer
+wait_forever

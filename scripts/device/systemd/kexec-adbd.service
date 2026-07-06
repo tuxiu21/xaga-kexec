@@ -7,7 +7,7 @@ Wants=kexec-vendor-mount.service
 
 [Service]
 Type=simple
-ExecStart=/bin/bash /lean/ubuntu_phase_a_init.sh adbd
+ExecStart=/lean/bin/kexec-adbd
 Restart=always
 RestartSec=5
 

@@ -6,7 +6,7 @@ Before=multi-user.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash /lean/ubuntu_phase_a_init.sh time-keeper
+ExecStart=/lean/bin/kexec-time-keeper
 Restart=always
 RestartSec=5
 

@@ -1,0 +1,8 @@
+#!/bin/bash
+set -uo pipefail
+
+. /lean/lib/kexec/common.sh
+. /lean/lib/kexec/time.sh
+
+start_time_keeper
+wait_forever

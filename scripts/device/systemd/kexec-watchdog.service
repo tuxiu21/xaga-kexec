@@ -6,7 +6,7 @@ Before=multi-user.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash /lean/ubuntu_phase_a_init.sh watchdog
+ExecStart=/lean/bin/kexec-watchdog
 Restart=always
 RestartSec=5
 

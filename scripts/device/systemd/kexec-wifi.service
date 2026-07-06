@@ -7,7 +7,7 @@ Wants=kexec-vendor-mount.service
 [Service]
 Type=simple
 ExecStartPre=/bin/bash -c 'for _ in $(seq 1 90); do [ -e /lean/run/adbd.ready ] && exit 0; sleep 1; done; echo "kexec-wifi: timed out waiting for /lean/run/adbd.ready" >&2; exit 1'
-ExecStart=/bin/bash /lean/ubuntu_phase_a_init.sh wifi
+ExecStart=/lean/bin/kexec-wifi
 Restart=on-failure
 RestartSec=10
 

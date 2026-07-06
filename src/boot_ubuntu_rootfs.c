@@ -20,7 +20,6 @@
 #define NEWROOT "/kexec"
 #define LEAN "/kexec/lean"
 #define LOG_FILE LEAN "/boot_ubuntu_rootfs.log"
-#define INIT_SRC LEAN "/ubuntu_phase_a_init.sh"
 #define SYSTEMD_INIT "/sbin/init"
 
 static void mkdir_p(const char *path, mode_t mode)
@@ -323,7 +322,7 @@ int main(void)
         NULL,
     };
 
-    logmsg("begin direct rootfs newroot=%s init=%s", NEWROOT, INIT_SRC);
+    logmsg("begin direct rootfs newroot=%s init=%s", NEWROOT, SYSTEMD_INIT);
     mount_if_needed("proc", "/proc", "proc", 0, "");
     mount_if_needed("sysfs", "/sys", "sysfs", 0, "");
     mount_if_needed("devtmpfs", "/dev", "devtmpfs", 0, "mode=0755");
@@ -335,8 +334,6 @@ int main(void)
         die("missing Ubuntu shell at " NEWROOT "/bin/sh errno=%d", errno);
     if (access(NEWROOT "/etc/os-release", R_OK) != 0)
         die("missing Ubuntu os-release errno=%d", errno);
-    if (access(INIT_SRC, X_OK) != 0)
-        die("missing init %s errno=%d", INIT_SRC, errno);
     if (access(NEWROOT SYSTEMD_INIT, X_OK) != 0)
         die("default systemd boot missing " SYSTEMD_INIT " errno=%d", errno);
     logmsg("default systemd boot; will exec " SYSTEMD_INIT);
