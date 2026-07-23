@@ -1,0 +1,32 @@
+# Machine-readable reproduction inputs. Fields are separated by a single "|".
+# group|id|kind|path|url|ref|revision|sha256
+source|gki_manifest|repo-manifest|sources/android-kernel|https://android.googlesource.com/kernel/manifest|common-android12-5.10|d49bde80eee9eaa27ad83e92a36d27cf08dcfa17|-
+source|gki_build|repo-project|sources/android-kernel/build|https://android.googlesource.com/kernel/build|master-kernel-build-2021|dbfab7e0de2e04316b526ef938b1140d7a5fd40d|-
+source|gki_common|repo-project|sources/android-kernel/common|https://github.com/tuxiu21/android_gki_kernel_5.10_common.git|mykernel-226|80751a7a9ff4f51f2c770522984975c6071239e8|-
+source|gki_virtual_device|repo-project|sources/android-kernel/common-modules/virtual-device|https://android.googlesource.com/kernel/common-modules/virtual-device|android12-5.10|a89e3169b6f22716d9b9c80fd1e0034bfd3fd492|-
+source|gki_configs|repo-project|sources/android-kernel/kernel/configs|https://android.googlesource.com/kernel/configs|master-kernel-build-2021|c10b7ea022edc356d37c092d7ca46bcb860f8a90|-
+source|gki_hikey_modules|repo-project|sources/android-kernel/hikey-modules|https://android.googlesource.com/kernel/hikey-modules|android12-5.10|2e97927f068cd9d92a4b8039ef64c4467ca8985b|-
+source|gki_kernel_build_tools|repo-project|sources/android-kernel/prebuilts/kernel-build-tools|https://android.googlesource.com/kernel/prebuilts/build-tools|master-kernel-build-2021|ca5b087f88c0302ff66f59a6f26be663e92baf15|-
+source|gki_build_tools|repo-project|sources/android-kernel/prebuilts/build-tools|https://android.googlesource.com/platform/prebuilts/build-tools|master-kernel-build-2021|cfedc16ec3deb680fca6fe2aff44a1837a97b50d|-
+source|gki_clang|repo-project|sources/android-kernel/prebuilts-master/clang/host/linux-x86|https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86|master-kernel-build-2021|6e3223f76384455acde43affde3df0ea9df66c0d|-
+source|gki_gcc|repo-project|sources/android-kernel/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8|https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8|master-kernel-build-2021|4e6f66acf138d40d9a80be24b275abb9c6eed729|-
+source|gki_mkbootimg|repo-project|sources/android-kernel/tools/mkbootimg|https://android.googlesource.com/platform/system/tools/mkbootimg|master-kernel-build-2021|34bc8bfb493401f7aadbd3b434f9fbfa521e9301|-
+source|xiaomi_xaga|git|sources/Xiaomi_Kernel_OpenSource|https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git|xaga-s-oss|efa945ca45eed466cdb2cbfcd7d5820e3d928238|-
+source|oneplus_mt6895|git|sources/android_kernel_5.10_oneplus_mt6895|https://github.com/OnePlusOSS/android_kernel_5.10_oneplus_mt6895.git|oneplus/mt6895_v_15.0.0_ace_race|05dd76e8b6e4969b7bcda3edc53a98ea441d90f5|-
+source|aosp_manifest|repo-manifest|sources/android-12.1|https://android.googlesource.com/platform/manifest|android-12.1.0_r21|eafeb3bfa959a70841944ac4416cd7fe090b6efb|-
+source|aosp_system_core|repo-project|sources/android-12.1/system/core|https://android.googlesource.com/platform/system/core|android-12.1.0_r21|cae6aec3881db4ef5925bcd14d8d4c26912377af|-
+source|aosp_adb|repo-project|sources/android-12.1/packages/modules/adb|https://android.googlesource.com/platform/packages/modules/adb|android-12.1.0_r21|73fcdbf7efeff1173afe1d1355b3a76a225eed97|-
+source|aosp_build|repo-project|sources/android-12.1/build/make|https://android.googlesource.com/platform/build|android-12.1.0_r21|72aadb2c86a56a5fe3bb6642c7a6c2ae9b2d3edd|-
+external|kexec_tools|archive-source|sources/kexec-tools-2.0.28|https://cdn.kernel.org/pub/linux/utils/kernel/kexec/kexec-tools-2.0.28.tar.xz|2.0.28|kexec-tools-2.0.28|d2f0ef872f39e2fe4b1b01feb62b0001383207239b9f8041f98a95564161d053
+input|ubuntu_iso|https-archive|local/ubuntu-26.04-live-server-arm64.iso|https://cdimage.ubuntu.com/ubuntu/releases/26.04/release/ubuntu-26.04-live-server-arm64.iso|26.04|casper/ubuntu-server-minimal.squashfs|c9aa567e6560b2eddae3af03fc686002e35b6fee96f97fd5df3271e846439fdd
+artifact|ubuntu_minimal_squashfs|iso-member|work/rootfs/ubuntu-server-minimal.squashfs|ubuntu_iso|casper/ubuntu-server-minimal.squashfs|scripts/host/build_ubuntu_rootfs.sh|-
+artifact|ubuntu_rootfs|derived-tar|work/output/ubuntu-26.04-server-minimal-arm64.tar.gz|ubuntu_minimal_squashfs|rootfs-tar.gz|scripts/host/build_ubuntu_rootfs.sh|GENERATED
+artifact|aosp_first_stage_init|derived-binary|prebuilt/init_first_stage_kxsh|aosp_system_core|init_first_stage|scripts/host/build_aosp_prebuilts.sh|GENERATED
+artifact|aosp_adbd|derived-binary|prebuilt/adbd|aosp_adb|adbd|scripts/host/build_aosp_prebuilts.sh|GENERATED
+tool|bash|command|bash|-|5.2.21|-|-
+tool|git|command|git|-|2.43.0|-|-
+tool|repo|command|repo|-|2.36|-|-
+tool|adb|env-command|ADB|-|36.0.2|-|-
+tool|cross_gcc|command|aarch64-linux-gnu-gcc|-|13.3.0|-|-
+tool|magiskboot|command|magiskboot|-|recorded-version-unavailable|-|-
+tool|host_build|commands|make,perl,sed,tar,cpio,gzip,curl,file,sha256sum,strings,timeout,modinfo,unsquashfs,setcap,getcap|-|required|-|-

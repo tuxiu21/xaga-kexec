@@ -220,6 +220,19 @@ aarch64-linux-gnu-gcc -static -Os -s -o work/output/ramdisk_kxshbin src/system_k
 
 ## Build
 
+For a new developer machine, start with
+[`docs/REPRODUCING.md`](docs/REPRODUCING.md) and the safe default, which does
+not modify sources or the device and does not use the network:
+
+```bash
+bash scripts/host/reproduce_from_stock.sh
+```
+
+The guide separates locked source preparation, optional destructive
+partitioning, trusted rootfs installation, build/install, and the boot test.
+The guide locks the official Ubuntu 26.04 server ISO and kexec-tools 2.0.28
+archives by HTTPS URL and SHA-256, while keeping every download explicit.
+
 Full rebuild from the connected stock Android device:
 
 ```bash

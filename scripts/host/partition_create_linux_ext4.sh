@@ -88,21 +88,35 @@ adb_shell()
 
 require_recovery()
 {
-  local state
+  local state bootmode
   state="$("$ADB" get-state 2>/dev/null | tr -d '\r' || true)"
-  if [ "$state" != "recovery" ]; then
-    echo "device is not in adb recovery state: ${state:-<offline>}" >&2
+  case "$state" in
+    device|recovery) ;;
+    *)
+      echo "device is not connected over adb: ${state:-<offline>}" >&2
+      exit 1
+      ;;
+  esac
+  bootmode="$("$ADB" shell 'getprop ro.bootmode 2>/dev/null' | tr -d '\r\n')"
+  if [ "$bootmode" != "recovery" ]; then
+    echo "device boot mode is '${bootmode:-<unknown>}', expected recovery" >&2
     exit 1
   fi
 }
 
 wait_recovery()
 {
-  local i state
+  local i state bootmode
 
   for i in $(seq 1 60); do
     state="$("$ADB" get-state 2>/dev/null | tr -d '\r' || true)"
-    [ "$state" = "recovery" ] && return 0
+    case "$state" in
+      device|recovery)
+        bootmode="$("$ADB" shell 'getprop ro.bootmode 2>/dev/null' |
+          tr -d '\r\n')"
+        [ "$bootmode" = recovery ] && return 0
+        ;;
+    esac
     sleep 1
   done
 

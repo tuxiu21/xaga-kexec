@@ -1,5 +1,11 @@
 # Patches
 
+## `kernel-docker-nftables.patch`
+
+Applies to the locked xaga GKI `common` tree. It records the nftables options
+that were previously only an uncommitted source-tree delta, so a fresh checkout
+gets the same Docker-facing kernel configuration.
+
 ## `aosp-init-kxsh-early-handoff.patch`
 
 Applies to `sources/android-12.1` / AOSP Android 12.1 `system/core/init`.
