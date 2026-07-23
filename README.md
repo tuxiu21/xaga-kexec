@@ -90,6 +90,47 @@ after kexec.
 - Do not repeatedly kexec after a failed boot without collecting pstore or lean
   logs. Ramoops is small and useful evidence is easy to overwrite.
 
+## Stock Rescue
+
+Stock Android can provide a small KernelSU rescue path after the Ubuntu
+watchdog resets back to stock. The stock path is intentionally minimal:
+
+```text
+KernelSU service.d
+  -> /data/adb/service.d/stock-rescue.sh
+  -> start Dropbear on 127.0.0.1:22
+  -> optionally reverse SSH to usjgw 127.0.0.1:22023
+  -> keep /data/local/tmp/stock-rescue.log
+```
+
+Install the stock rescue files while stock ADB is available:
+
+```bash
+cd /home/in/work/kernels
+ADB=adb.exe AUTHORIZED_KEYS=/path/to/authorized_keys \
+  bash scripts/host/install_stock_rescue.sh
+```
+
+Reverse SSH to the Oracle VM uses the bundled aarch64 `prebuilt/dbclient` and a
+dedicated private key installed on stock. The default sample configuration
+targets `usjgw` as `ubuntu@129.146.190.204` and reserves port `22023` for stock:
+
+```bash
+ADB=adb.exe \
+AUTHORIZED_KEYS=/path/to/authorized_keys \
+ORACLE_IDENTITY=/path/to/oracle_ed25519 \
+  bash scripts/host/install_stock_rescue.sh
+```
+
+If the reverse tunnel is up, connect from `usjgw` with:
+
+```bash
+ssh -p 22023 root@127.0.0.1
+```
+
+The helper `/data/local/tmp/stock-rescue/reboot-to-ubuntu.sh` reuses the staged
+stock kexec payload under `/data/local/tmp` to jump back into Ubuntu.
+
 ## Requirements
 
 Host tools:

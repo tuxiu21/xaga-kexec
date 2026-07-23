@@ -1,0 +1,30 @@
+# Stock Android rescue settings for KernelSU service.d.
+#
+# Install this as:
+#   /data/local/tmp/stock-rescue/stock-rescue.conf
+
+RESCUE_DIR=/data/local/tmp/stock-rescue
+LOG_FILE=/data/local/tmp/stock-rescue.log
+
+# Keep stock SSH local by default. Use Oracle reverse SSH to reach it remotely.
+DROPBEAR_LISTEN=127.0.0.1:22
+
+# Optional additional LAN listener. Leave empty unless you intentionally want
+# LAN/public router forwarding to stock Dropbear.
+DROPBEAR_EXTRA_LISTEN=
+
+# Remote reverse SSH is optional because this repo ships Dropbear server, not
+# an SSH client. Set SSH_CLIENT_BIN to a static dbclient/ssh binary when present.
+# SSH_CLIENT_TYPE accepts dropbear or openssh.
+SSH_CLIENT_BIN=/data/local/tmp/stock-rescue/ssh-client
+SSH_CLIENT_TYPE=dropbear
+ORACLE_HOST=129.146.190.204
+ORACLE_USER=ubuntu
+ORACLE_PORT=22
+ORACLE_IDENTITY=/data/local/tmp/stock-rescue/oracle_ed25519
+ORACLE_REMOTE_BIND=127.0.0.1
+ORACLE_REMOTE_PORT=22023
+
+BOOT_WAIT_SEC=180
+NET_WAIT_SEC=180
+REVERSE_RETRY_SEC=30
