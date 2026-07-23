@@ -1,8 +1,8 @@
 #!/bin/bash
 set -uo pipefail
 
-. /lean/lib/kexec/common.sh
-. /lean/lib/kexec/watchdog.sh
+. /usr/local/libexec/kexec/lib/kexec/common.sh
+. /usr/local/libexec/kexec/lib/kexec/watchdog.sh
 
 start_watchdog_gated
 wait_forever

@@ -52,16 +52,17 @@ ensure_vendor_mounts()
     fi
 
     log "vendor mount: begin slot=$slot"
-    if [ -x /lean/map_super_partitions.py ]; then
+    mapper=/usr/local/libexec/kexec/map_super_partitions.py
+    if [ -x "$mapper" ]; then
         if ! resolve_dm_by_name "vendor${slot}" >/dev/null 2>&1 ||
            ! resolve_dm_by_name "vendor_dlkm${slot}" >/dev/null 2>&1; then
-            /lean/map_super_partitions.py --slot "$slot" \
+            "$mapper" --slot "$slot" \
                 --partition "vendor${slot}" \
                 --partition "vendor_dlkm${slot}" >> "$LOG" 2>&1 || \
                 log "vendor mount: map_super_partitions.py failed"
         fi
     else
-        log "vendor mount: missing /lean/map_super_partitions.py"
+        log "vendor mount: missing $mapper"
     fi
 
     mount_one_vendor_path "vendor${slot}" /vendor || true

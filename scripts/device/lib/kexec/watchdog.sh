@@ -1,12 +1,12 @@
 #!/bin/sh
 
-WATCHDOG_PID="${WATCHDOG_PID:-/lean/run/watchdog.ubuntu.pid}"
-WATCHDOG_STATUS="${WATCHDOG_STATUS:-/lean/run/watchdog_health.status}"
+WATCHDOG_PID="${WATCHDOG_PID:-/run/kexec-runtime/watchdog.pid}"
+WATCHDOG_STATUS="${WATCHDOG_STATUS:-/run/kexec-runtime/watchdog-health}"
 WATCHDOG_CONFIG="${WATCHDOG_CONFIG:-/etc/xaga-watchdog.conf}"
 
 start_watchdog_dev()
 {
-    mkdir -p /lean/run
+    mkdir -p "$(dirname "$WATCHDOG_PID")"
     WATCHDOG_DEV=""
     if ! watchdog_open_device 2>/dev/null; then
         log "watchdog dev: no watchdog device available"
@@ -121,7 +121,7 @@ watchdog_self_heal()
     systemctl restart ssh.service 2>/dev/null || systemctl restart sshd.service 2>/dev/null || true
 
     if [ "$fail_count" -ge $((WATCHDOG_SELF_HEAL_AFTER + 1)) ]; then
-        systemctl restart wpa_supplicant@wlan0.service 2>/dev/null || true
+        systemctl restart kexec-wpa-supplicant.service 2>/dev/null || true
     fi
     if [ "$fail_count" -ge $((WATCHDOG_SELF_HEAL_AFTER + 2)) ]; then
         systemctl restart systemd-networkd.service 2>/dev/null || true
@@ -141,7 +141,7 @@ start_watchdog_gated()
         return $?
     fi
 
-    mkdir -p /lean/run
+    mkdir -p "$(dirname "$WATCHDOG_PID")"
     WATCHDOG_DEV=""
     if ! watchdog_open_device 2>/dev/null; then
         log "watchdog gated: no watchdog device available"

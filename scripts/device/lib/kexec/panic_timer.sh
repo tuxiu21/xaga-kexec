@@ -1,12 +1,12 @@
 #!/bin/sh
 
-PANIC_TIMER_PID="${PANIC_TIMER_PID:-/lean/run/panic_timer.ubuntu.pid}"
+PANIC_TIMER_PID="${PANIC_TIMER_PID:-/run/kexec-runtime/panic-timer.pid}"
 
 start_panic_timer()
 {
-    after=300
-    if [ -s /lean/panic_after ]; then
-        after="$(cat /lean/panic_after 2>/dev/null || echo 300)"
+    after=0
+    if [ -s /etc/kexec-runtime/panic_after ]; then
+        after="$(cat /etc/kexec-runtime/panic_after 2>/dev/null || echo 0)"
     fi
 
     case "$after" in
@@ -18,16 +18,13 @@ start_panic_timer()
 
     (
         log "panic timer armed: ${after}s"
-        if [ -x /lean/busybox ]; then
-            /lean/busybox sleep "$after"
-        else
-            sleep "$after"
-        fi
+        sleep "$after"
         log "panic timer firing"
         sync
         echo 1 > /proc/sys/kernel/sysrq 2>/dev/null || true
         echo c > /proc/sysrq-trigger 2>/dev/null || true
         echo panic > /proc/sysrq-trigger 2>/dev/null || true
     ) &
+    mkdir -p "$(dirname "$PANIC_TIMER_PID")"
     echo "$!" > "$PANIC_TIMER_PID"
 }

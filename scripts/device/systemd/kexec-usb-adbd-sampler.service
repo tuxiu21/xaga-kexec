@@ -6,7 +6,7 @@ After=kexec-adbd.service
 [Service]
 Type=simple
 Environment=USB_ADBD_SAMPLER=1
-ExecStart=/lean/bin/kexec-usb-adbd-sampler
+ExecStart=/usr/local/libexec/kexec/bin/kexec-usb-adbd-sampler
 Restart=always
 RestartSec=5
 

@@ -7,7 +7,7 @@ Wants=kexec-vendor-mount.service
 
 [Service]
 Type=simple
-ExecStart=/lean/bin/kexec-adbd
+ExecStart=/usr/local/libexec/kexec/bin/kexec-adbd
 Restart=always
 RestartSec=5
 

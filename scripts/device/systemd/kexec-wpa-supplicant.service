@@ -1,0 +1,16 @@
+[Unit]
+Description=Kexec Ubuntu WPA supplicant
+After=kexec-wifi.service
+Wants=kexec-wifi.service
+ConditionPathExists=/etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+
+[Service]
+Type=simple
+ExecStartPre=/bin/bash -c 'for _ in $(seq 1 180); do [ "$(cat /var/lib/kexec-runtime/wifi-status 2>/dev/null)" = READY ] && [ -e /sys/class/net/wlan0 ] && break; sleep 1; done; [ "$(cat /var/lib/kexec-runtime/wifi-status 2>/dev/null)" = READY ] && [ -e /sys/class/net/wlan0 ] || { echo "kexec-wpa-supplicant: timed out waiting for kexec Wi-Fi READY" >&2; exit 1; }; mac="${KEXEC_WLAN0_MAC:-00:08:22:2c:db:fc}"; cur="$(cat /sys/class/net/wlan0/address 2>/dev/null || true)"; if [ "$cur" != "$mac" ]; then ip link set dev wlan0 down || true; ip link set dev wlan0 address "$mac"; ip link set dev wlan0 up || true; fi; echo "kexec-wpa-supplicant: wlan0 mac=$(cat /sys/class/net/wlan0/address 2>/dev/null)"'
+ExecStart=/usr/sbin/wpa_supplicant -c/etc/wpa_supplicant/wpa_supplicant-wlan0.conf -iwlan0
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,7 @@
 #!/bin/sh
 
-TIME_STATE="${TIME_STATE:-/lean/time_state}"
-TIME_KEEPER_PID="${TIME_KEEPER_PID:-/lean/run/time_keeper.ubuntu.pid}"
+TIME_STATE="${TIME_STATE:-/var/lib/kexec-runtime/time-state}"
+TIME_KEEPER_PID="${TIME_KEEPER_PID:-/run/kexec-runtime/time-keeper.pid}"
 
 restore_time()
 {
@@ -26,7 +26,7 @@ restore_time()
 start_time_keeper()
 {
     restore_time
-    mkdir -p /lean/run
+    mkdir -p "$(dirname "$TIME_STATE")" "$(dirname "$TIME_KEEPER_PID")"
     (
         while true; do
             now="$(date +%s 2>/dev/null || echo 0)"

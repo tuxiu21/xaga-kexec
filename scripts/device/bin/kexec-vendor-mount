@@ -1,7 +1,7 @@
 #!/bin/bash
 set -uo pipefail
 
-. /lean/lib/kexec/common.sh
-. /lean/lib/kexec/vendor_mount.sh
+. /usr/local/libexec/kexec/lib/kexec/common.sh
+. /usr/local/libexec/kexec/lib/kexec/vendor_mount.sh
 
 ensure_vendor_mounts

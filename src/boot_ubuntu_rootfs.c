@@ -10,7 +10,9 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <linux/watchdog.h>
 #include <unistd.h>
 
 #ifndef MS_MOVE
@@ -18,9 +20,10 @@
 #endif
 
 #define NEWROOT "/kexec"
-#define LEAN "/kexec/lean"
-#define LOG_FILE LEAN "/boot_ubuntu_rootfs.log"
+#define LOG_FILE NEWROOT "/var/log/kexec-runtime/boot-rootfs.log"
 #define SYSTEMD_INIT "/sbin/init"
+
+static int early_watchdog_fd = -1;
 
 static void mkdir_p(const char *path, mode_t mode)
 {
@@ -84,6 +87,39 @@ static void panic_now(void)
     }
     for (;;)
         sleep(60);
+}
+
+static void early_timeout(int signo)
+{
+    (void)signo;
+    panic_now();
+}
+
+static void start_early_safety(void)
+{
+    const char *devices[] = { "/dev/watchdog0", "/dev/watchdog", NULL };
+    const char **p;
+    int timeout = 30;
+
+    signal(SIGALRM, early_timeout);
+    alarm(300);
+    for (p = devices; *p; p++) {
+        early_watchdog_fd = open(*p, O_WRONLY);
+        if (early_watchdog_fd >= 0) {
+            ioctl(early_watchdog_fd, WDIOC_SETTIMEOUT, &timeout);
+            if (write(early_watchdog_fd, "\0", 1) < 0)
+                logmsg("warning: initial early watchdog kick failed errno=%d", errno);
+            logmsg("early watchdog armed dev=%s requested_timeout=%ds", *p, timeout);
+            return;
+        }
+    }
+    logmsg("warning: no early hardware watchdog; 300s panic alarm remains armed");
+}
+
+static void kick_early_watchdog(void)
+{
+    if (early_watchdog_fd >= 0 && write(early_watchdog_fd, "\0", 1) < 0)
+        logmsg("warning: early watchdog kick failed errno=%d", errno);
 }
 
 static void die(const char *fmt, ...)
@@ -293,11 +329,11 @@ static void signal_other_processes(int sig, int *sent, int *failed)
     closedir(dir);
 }
 
-static void clean_lean_processes(void)
+static void clean_bootstrap_processes(void)
 {
     int sent = 0, failed = 0;
 
-    logmsg("cleaning lean userspace before rootfs handoff");
+    logmsg("cleaning bootstrap userspace before rootfs handoff");
     signal_other_processes(SIGTERM, &sent, &failed);
     logmsg("sent SIGTERM to %d processes (%d failed)", sent, failed);
     sleep(1);
@@ -329,6 +365,7 @@ int main(void)
     mount_if_needed("devpts", "/dev/pts", "devpts", 0, "mode=0620,ptmxmode=0666");
     mount_if_needed("configfs", "/config", "configfs", 0, "");
     prepare_dev_nodes();
+    start_early_safety();
 
     if (access(NEWROOT "/bin/sh", X_OK) != 0)
         die("missing Ubuntu shell at " NEWROOT "/bin/sh errno=%d", errno);
@@ -350,7 +387,8 @@ int main(void)
     mount_if_needed("tmpfs", NEWROOT "/run", "tmpfs", 0, "mode=0755");
     mount_if_needed("none", "/sys/fs/cgroup", "cgroup2", 0, "");
 
-    clean_lean_processes();
+    clean_bootstrap_processes();
+    kick_early_watchdog();
 
     logmsg("moving mounts and switching root");
     move_mount_if_present("/sys", NEWROOT "/sys");
@@ -368,6 +406,15 @@ int main(void)
     if (chdir("/") != 0)
         die("chdir / failed errno=%d", errno);
 
+    kick_early_watchdog();
+    alarm(0);
+    /*
+     * Do not magic-close the hardware watchdog. Closing here leaves the
+     * countdown armed across exec; kexec-watchdog.service takes ownership
+     * during early multi-user startup.
+     */
+    if (early_watchdog_fd >= 0)
+        close(early_watchdog_fd);
     execve(init_path, argv, envp);
     die("exec %s failed errno=%d", init_path, errno);
 }

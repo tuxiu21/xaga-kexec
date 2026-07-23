@@ -6,7 +6,7 @@ Before=multi-user.target
 
 [Service]
 Type=simple
-ExecStart=/lean/bin/kexec-time-keeper
+ExecStart=/usr/local/libexec/kexec/bin/kexec-time-keeper
 Restart=always
 RestartSec=5
 

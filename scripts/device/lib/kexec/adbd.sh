@@ -1,9 +1,10 @@
 #!/bin/sh
 
-ADBD_LOG="${ADBD_LOG:-/lean/adbd_ubuntu.log}"
-ADBD_READY="${ADBD_READY:-/lean/run/adbd.ready}"
-USB_ADBD_SAMPLER_LOG="${USB_ADBD_SAMPLER_LOG:-/lean/usb_adbd_sampler.log}"
-USB_ADBD_SAMPLER_PID="${USB_ADBD_SAMPLER_PID:-/lean/run/usb_adbd_sampler.pid}"
+RUNTIME="${KEXEC_RUNTIME:-/usr/local/libexec/kexec}"
+ADBD_LOG="${ADBD_LOG:-/var/log/kexec-runtime/adbd.log}"
+ADBD_READY="${ADBD_READY:-/run/kexec-runtime/adbd.ready}"
+USB_ADBD_SAMPLER_LOG="${USB_ADBD_SAMPLER_LOG:-/var/log/kexec-runtime/usb-adbd-sampler.log}"
+USB_ADBD_SAMPLER_PID="${USB_ADBD_SAMPLER_PID:-/run/kexec-runtime/usb-adbd-sampler.pid}"
 
 start_adbd()
 {
@@ -16,16 +17,16 @@ start_adbd()
     mount_if_needed /dev/pts devpts devpts "mode=0620,ptmxmode=0666"
     mount_if_needed /config configfs configfs ""
 
-    mkdir -p /system/bin /dev/usb-ffs/adb /lean/run
+    mkdir -p /system/bin /dev/usb-ffs/adb /run/kexec-runtime /var/log/kexec-runtime
     ln -sf /bin/sh /system/bin/sh 2>/dev/null || true
-    ln -sf /lean/linker64 /system/bin/linker64 2>/dev/null || true
+    ln -sf "$RUNTIME/linker64" /system/bin/linker64 2>/dev/null || true
 
-    if [ ! -x /lean/adbd ]; then
-        log "setup adbd: missing /lean/adbd"
+    if [ ! -x "$RUNTIME/adbd" ]; then
+        log "setup adbd: missing $RUNTIME/adbd"
         return 1
     fi
-    if [ ! -x /lean/linker64 ]; then
-        log "setup adbd: missing /lean/linker64"
+    if [ ! -x "$RUNTIME/linker64" ]; then
+        log "setup adbd: missing $RUNTIME/linker64"
     fi
 
     if [ -e /sys/fs/selinux/enforce ]; then
@@ -65,9 +66,9 @@ start_adbd()
     log_ls "adb FunctionFS before adbd" /dev/usb-ffs/adb
 
     : > "$ADBD_LOG"
-    LD_LIBRARY_PATH=/lean/adblib /lean/adbd >> "$ADBD_LOG" 2>&1 &
+    LD_LIBRARY_PATH="$RUNTIME/adblib" "$RUNTIME/adbd" >> "$ADBD_LOG" 2>&1 &
     adbd_pid=$!
-    echo "$adbd_pid" > /lean/run/adbd.ubuntu.pid
+    echo "$adbd_pid" > /run/kexec-runtime/adbd.pid
     log "setup adbd: started pid=$adbd_pid"
 
     ready=0

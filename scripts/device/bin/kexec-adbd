@@ -1,8 +1,8 @@
 #!/bin/bash
 set -uo pipefail
 
-. /lean/lib/kexec/common.sh
-. /lean/lib/kexec/adbd.sh
+. /usr/local/libexec/kexec/lib/kexec/common.sh
+. /usr/local/libexec/kexec/lib/kexec/adbd.sh
 
 start_adbd
 wait_forever

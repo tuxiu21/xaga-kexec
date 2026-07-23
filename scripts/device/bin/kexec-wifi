@@ -1,8 +1,8 @@
 #!/bin/bash
 set -uo pipefail
 
-. /lean/lib/kexec/common.sh
-. /lean/lib/kexec/wifi.sh
+. /usr/local/libexec/kexec/lib/kexec/common.sh
+. /usr/local/libexec/kexec/lib/kexec/wifi.sh
 
 start_wifi
 wait_forever

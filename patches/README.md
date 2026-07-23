@@ -11,15 +11,14 @@ The patch adds an early kexec handoff before `DoFirstStageMount()`:
   -> find executable /kxshbin or /first_stage_ramdisk/kxshbin
   -> fork/exec kxshbin --prepare
       -> mount the linux partition at /kexec
-      -> verify /kexec/lean/busybox and /kexec/lean/kxsh.sh
+      -> verify /kexec/usr/local/libexec/kexec/boot_ubuntu_rootfs
   -> on success, skip Android first-stage mount
   -> FreeRamdisk()
-  -> execve /kexec/lean/busybox sh /kexec/lean/kxsh.sh
+  -> execve /kexec/usr/local/libexec/kexec/boot_ubuntu_rootfs
 ```
 
-The linux partition root is now reserved for the Ubuntu rootfs. The lean rescue
-runtime is installed under `/lean` on that partition, visible as `/kexec/lean`
-after kexec.
+The linux partition root is the Ubuntu rootfs. Runtime helpers are installed
+under `/usr/local/libexec/kexec`; no intermediate rescue userspace is entered.
 
 If `/kxshbin` is missing or `--prepare` fails, init continues to the normal
 `/system/bin/init selinux_setup` handoff.

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Apply the LEAN_KEXEC_ADBD source patch into the AOSP adb module.
+# Apply the KEXEC_UBUNTU_ADBD source patch into the AOSP adb module.
 #
-# The lean adbd is a few localized changes on top of stock AOSP adb
+# The Ubuntu USB adbd is a few localized changes on top of stock AOSP adb
 # (daemon/main.cpp + daemon/auth.cpp): force auth off, keep root, USB-only
 # transport, and guard out three threads that would busy-loop a full CPU each
-# in the lean runtime (no property service): the adb_wifi observer, the
+# in the direct kexec runtime (no property service): the adb_wifi observer, the
 # adbd_auth framework thread, and the watchdog PropertyMonitor.
 #
 # These live as a patch in this repo (not committed in the repo-managed AOSP
@@ -19,7 +19,7 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 ADB_SRC="${ADB_SRC:-$AOSP_DIR/packages/modules/adb}"
-PATCH="${PATCH:-$ROOT/patches/adbd-lean-kexec.patch}"
+PATCH="${PATCH:-$ROOT/patches/adbd-kexec-ubuntu.patch}"
 
 [ -d "$ADB_SRC/.git" ] || { echo "adb source git repo not found at $ADB_SRC" >&2; exit 1; }
 [ -f "$PATCH" ]        || { echo "patch not found: $PATCH" >&2; exit 1; }
@@ -27,8 +27,8 @@ PATCH="${PATCH:-$ROOT/patches/adbd-lean-kexec.patch}"
 cd "$ADB_SRC"
 
 # Idempotent: if the markers are already present in both files, do nothing.
-if grep -qa 'LEAN_KEXEC_ADBD' daemon/main.cpp && grep -qa 'LEAN_KEXEC_ADBD' daemon/auth.cpp; then
-  echo "LEAN_KEXEC_ADBD already present in $ADB_SRC/daemon -> nothing to do"
+if grep -qa 'KEXEC_UBUNTU_ADBD' daemon/main.cpp && grep -qa 'KEXEC_UBUNTU_ADBD' daemon/auth.cpp; then
+  echo "KEXEC_UBUNTU_ADBD already present in $ADB_SRC/daemon -> nothing to do"
   exit 0
 fi
 

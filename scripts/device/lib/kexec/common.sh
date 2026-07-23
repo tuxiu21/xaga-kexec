@@ -1,9 +1,10 @@
 #!/bin/sh
 
-LOG="${LOG:-/lean/ubuntu_phase_a.log}"
+LOG="${LOG:-/var/log/kexec-runtime/ubuntu-runtime.log}"
 
 log()
 {
+    mkdir -p "$(dirname "$LOG")"
     printf 'kexec-ubuntu: %s\n' "$*" | tee -a "$LOG" >/dev/null
 }
 
@@ -39,10 +40,6 @@ wait_forever()
     sync
     log "ready; waiting"
     while true; do
-        if [ -x /lean/busybox ]; then
-            /lean/busybox sleep 60
-        else
-            sleep 60
-        fi
+        sleep 60
     done
 }

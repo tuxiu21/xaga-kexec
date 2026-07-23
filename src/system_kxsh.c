@@ -5,15 +5,18 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/sysmacros.h>
 #include <unistd.h>
+#include <linux/watchdog.h>
 
 #define LINUX_MOUNT "/kexec"
-#define LINUX_RUNTIME "/kexec/lean"
+#define BOOT_HELPER "/kexec/usr/local/libexec/kexec/boot_ubuntu_rootfs"
 
 static int make_block_node_from_sysfs(const char *name);
+static int watchdog_fd = -1;
 
 static void logmsg(const char *fmt, ...)
 {
@@ -61,7 +64,7 @@ static int mount_one(const char *src, const char *target, const char *type,
     return -1;
 }
 
-static int mount_linux_runtime(void)
+static int mount_linux_root(void)
 {
     const char *candidates[] = {
         "/dev/block/by-name/linux",
@@ -79,12 +82,11 @@ static int mount_linux_runtime(void)
         logmsg("trying linux runtime from %s", *p);
         if (mount(*p, LINUX_MOUNT, "ext4", MS_NOSUID | MS_NODEV | MS_NOATIME, "") == 0 ||
             errno == EBUSY) {
-            if (access(LINUX_RUNTIME "/busybox", X_OK) == 0 &&
-                access(LINUX_RUNTIME "/kxsh.sh", R_OK) == 0) {
-                logmsg("mounted linux root at " LINUX_MOUNT ", lean runtime at " LINUX_RUNTIME);
+            if (access(BOOT_HELPER, X_OK) == 0) {
+                logmsg("mounted linux root at " LINUX_MOUNT ", boot helper at " BOOT_HELPER);
                 return 0;
             }
-            logmsg("linux partition mounted, but lean runtime is incomplete at " LINUX_RUNTIME);
+            logmsg("linux partition mounted, but boot helper is missing at " BOOT_HELPER);
             return -1;
         }
         logmsg("mount linux runtime from %s failed errno=%d", *p, errno);
@@ -94,11 +96,48 @@ static int mount_linux_runtime(void)
     return -1;
 }
 
+static void watchdog_start(void)
+{
+    const char *devices[] = { "/dev/watchdog0", "/dev/watchdog", NULL };
+    const char **p;
+    int timeout = 30;
+
+    for (p = devices; *p; p++) {
+        watchdog_fd = open(*p, O_WRONLY);
+        if (watchdog_fd < 0)
+            continue;
+        ioctl(watchdog_fd, WDIOC_SETTIMEOUT, &timeout);
+        if (write(watchdog_fd, "\0", 1) < 0)
+            logmsg("early watchdog initial kick failed errno=%d", errno);
+        logmsg("early watchdog armed dev=%s requested_timeout=%ds", *p, timeout);
+        return;
+    }
+    logmsg("warning: early watchdog unavailable during linux-root mount");
+}
+
+static void watchdog_kick(void)
+{
+    if (watchdog_fd >= 0 && write(watchdog_fd, "\0", 1) < 0)
+        logmsg("early watchdog kick failed errno=%d", errno);
+}
+
+static void watchdog_handoff(int success)
+{
+    if (watchdog_fd < 0)
+        return;
+    watchdog_kick();
+    if (!success && write(watchdog_fd, "V", 1) < 0)
+        logmsg("early watchdog disarm request failed errno=%d", errno);
+    close(watchdog_fd);
+    watchdog_fd = -1;
+}
+
 static void wait_for_runtime_nodes(void)
 {
     int i;
 
     for (i = 0; i < 30; i++) {
+        watchdog_kick();
         make_block_node_from_sysfs("sdc88");
         if (access("/dev/block/sdc88", F_OK) == 0 ||
             access("/dev/block/by-name/linux", F_OK) == 0) {
@@ -163,34 +202,37 @@ static int prepare_linux_runtime(void)
     mount_one("tmpfs", "/tmp", "tmpfs", 0, "mode=1777");
     mount_one("configfs", "/config", "configfs", 0, "");
 
+    watchdog_start();
     wait_for_runtime_nodes();
-    if (mount_linux_runtime() == 0) {
+    if (mount_linux_root() == 0) {
         logmsg("prepare linux runtime ok");
+        watchdog_handoff(1);
         return 0;
     }
 
     logmsg("prepare linux runtime failed");
+    /* Android fallback must not inherit an armed kexec watchdog. */
+    watchdog_handoff(0);
     return 1;
 }
 
 int main(int argc, char **argv)
 {
-    char *linux_argv[] = { LINUX_RUNTIME "/busybox", "sh", LINUX_RUNTIME "/kxsh.sh", NULL };
+    char *linux_argv[] = { BOOT_HELPER, NULL };
     char *linux_envp[] = {
-        "KEXEC_BASE=" LINUX_RUNTIME,
-        "PATH=" LINUX_RUNTIME ":/system/bin:/vendor/bin",
-        "HOME=" LINUX_RUNTIME "/root",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "HOME=/root",
         NULL,
     };
 
-    logmsg("entered static ramdisk kxsh");
+    logmsg("entered static ramdisk bootstrap");
 
     if (argc > 1 && strcmp(argv[1], "--prepare") == 0) {
         return prepare_linux_runtime();
     }
 
     if (prepare_linux_runtime() == 0) {
-        logmsg("exec " LINUX_RUNTIME "/busybox sh " LINUX_RUNTIME "/kxsh.sh");
+        logmsg("exec " BOOT_HELPER);
         execve(linux_argv[0], linux_argv, linux_envp);
         logmsg("exec linux runtime failed: errno=%d", errno);
     }

@@ -1,7 +1,7 @@
 #!/bin/sh
 
-WIFI_PID="${WIFI_PID:-/lean/run/wifi_bringup.ubuntu.pid}"
-WIFI_FLAG="${WIFI_FLAG:-/lean/ubuntu_wifi}"
+WIFI_PID="${WIFI_PID:-/run/kexec-runtime/wifi-bringup.pid}"
+WIFI_FLAG="${WIFI_FLAG:-/etc/kexec-runtime/wifi_enabled}"
 
 start_wifi()
 {
@@ -17,13 +17,15 @@ start_wifi()
             ;;
     esac
 
-    if [ ! -x /lean/wifi_bringup.sh ]; then
-        log "wifi requested but /lean/wifi_bringup.sh is missing"
+    runtime=/usr/local/libexec/kexec
+    if [ ! -x "$runtime/wifi_bringup.sh" ]; then
+        log "wifi requested but $runtime/wifi_bringup.sh is missing"
         return 1
     fi
 
     log "wifi bringup starting"
-    KEXEC_BASE=/lean /lean/busybox sh /lean/wifi_bringup.sh &
+    mkdir -p "$(dirname "$WIFI_PID")"
+    KEXEC_RUNTIME="$runtime" /bin/sh "$runtime/wifi_bringup.sh" &
     echo "$!" > "$WIFI_PID"
     log "wifi bringup started pid=$!"
 }

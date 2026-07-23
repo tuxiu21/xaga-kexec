@@ -2,8 +2,7 @@
 # Install an Ubuntu rootfs tarball into the linux partition root.
 #
 # Layout after install:
-#   linux partition /      -> Ubuntu rootfs
-#   linux partition /lean  -> lean rescue runtime, preserved by this script
+#   linux partition / -> Ubuntu rootfs and direct kexec runtime
 set -euo pipefail
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
@@ -35,15 +34,12 @@ die()
 [ -s "$ROOTFS_TAR" ] || die "missing rootfs tarball: $ROOTFS_TAR"
 [ -s "$EXTRACTOR" ] || die "missing busybox extractor: $EXTRACTOR"
 
-# Reject archives that could overwrite /lean or escape the target root.
+# Reject archives that could escape the target root.
 while IFS= read -r entry; do
   case "$entry" in
     ""|"./") continue ;;
     /*|*"/../"*|../*|*"/.."|..)
       die "unsafe tar entry: $entry"
-      ;;
-    lean|lean/*|./lean|./lean/*)
-      die "rootfs archive contains /lean; refusing to overwrite lean runtime"
       ;;
   esac
 done < <(tar -tf "$ROOTFS_TAR")
@@ -69,10 +65,9 @@ adb_root_shell "
 adb_root_shell "
   set -e
   chmod 0755 '$ADB_STAGE/busybox'
-  mkdir -p '$LINUX_MOUNT/lean'
   if [ '$WIPE_UBUNTU' = '1' ]; then
     find '$LINUX_MOUNT' -mindepth 1 -maxdepth 1 \
-      ! -name lean ! -name lost+found -exec rm -rf {} +
+      ! -name lost+found -exec rm -rf {} +
   fi
   '$ADB_STAGE/busybox' tar -xzf '$ADB_STAGE/rootfs.tar.gz' -C '$LINUX_MOUNT'
   [ -e '$LINUX_MOUNT/etc/os-release' ] || {

@@ -1,9 +1,8 @@
-# Kexec Lean Linux on mt6895
+# Kexec Ubuntu on mt6895
 
-This project boots a lean rescue userspace, and optionally a direct-root Ubuntu
-rootfs, on xaga/mt6895 hardware through `kexec`. The current default path does
-not modify `/system`; Ubuntu and the lean runtime are stored on the dedicated
-`linux` partition, not on `/data`.
+This project boots a direct-root Ubuntu system on xaga/mt6895 through `kexec`.
+Ubuntu and its runtime helpers live on the dedicated `linux` partition. There
+is no intermediate lean/rescue userspace and no runtime dependency on `/data`.
 
 ## Active Handoff
 
@@ -12,62 +11,56 @@ GKI ramdisk /init
   -> run ramdisk /kxshbin --prepare
       -> create early /dev/block nodes when needed
       -> mount the linux partition directly at /kexec
-      -> verify /kexec/lean/busybox and /kexec/lean/kxsh.sh
+      -> verify /kexec/usr/local/libexec/kexec/boot_ubuntu_rootfs
   -> FreeRamdisk()
       -> delete only files still on the old ramdisk st_dev
       -> leave /kexec alone because it is an ext4 mount
-  -> execve /kexec/lean/busybox sh /kexec/lean/kxsh.sh
-      -> start lean adbd, Dropbear, watchdog, optional Wi-Fi bring-up
-      -> or, if /kexec/lean/boot_ubuntu_rootfs.once exists,
-         switch_root to the Ubuntu rootfs at /kexec
+  -> execve /kexec/usr/local/libexec/kexec/boot_ubuntu_rootfs
+      -> arm the early hardware-watchdog/panic safety net
+      -> move mounts, chroot to /kexec, and exec /sbin/init
+  -> systemd multi-user.target
 ```
 
 The linux partition is expected at `/dev/block/by-name/linux`; `/dev/block/sdc88`
 is also recognized because by-name links may not exist yet in first-stage init.
 When stock Android is running, scripts mount the same partition at
 `/mnt/linux_kexec` for installation and log collection. That stock-side mount
-point is not used by the lean runtime.
-
-The linux partition root is reserved for the Ubuntu rootfs. The lean rescue
-runtime lives under `/lean` on that partition, which appears as `/kexec/lean`
-after kexec.
+point is not used after the handoff.
 
 ## Current State
 
-- Lean ADB works. The lean serial is `0123456789abcdef`.
 - Direct-root Ubuntu handoff is implemented through
-  `/kexec/lean/boot_ubuntu_rootfs`; the Ubuntu ADB serial is
+  `/kexec/usr/local/libexec/kexec/boot_ubuntu_rootfs`; the Ubuntu ADB serial is
   `ubuntu012345678`.
 - The GKI ramdisk embeds `/kxshbin`; no external `/mnt/kxshbinxxxx` handoff
   binary is required.
 - `prebuilt/init_first_stage_kxsh` is a rebuilt AOSP first-stage init. It runs
   `/kxshbin --prepare` before `DoFirstStageMount()`. If prepare succeeds, it
-  skips Android first-stage mounts, frees the old ramdisk, and execs
-  `/kexec/lean/busybox sh /kexec/lean/kxsh.sh`. If prepare fails or `/kxshbin` is missing,
-  it falls back to normal `/system/bin/init selinux_setup`.
+  skips Android first-stage mounts, frees the old ramdisk, and execs the static
+  direct-root helper. If prepare fails or `/kxshbin` is missing, it falls back
+  to normal `/system/bin/init selinux_setup`.
 - `kxshbin` is a small static ramdisk bootstrap built from `src/system_kxsh.c`.
-  `--prepare` mounts `/kexec` and verifies `/kexec/lean`, then returns to init.
+  `--prepare` mounts `/kexec` and verifies the direct-root helper, then returns
+  to init.
 - `scripts/host/install_linux_runtime.sh` installs runtime files into the linux
-  partition's `/lean` directory. It uses `/data/local/tmp/linux_runtime_stage` only as a
-  temporary stock Android transfer staging directory and removes it after copy.
+  partition's `/usr/local/libexec/kexec` directory. Persistent state is under
+  `/var/lib/kexec-runtime`, logs under `/var/log/kexec-runtime`, and volatile
+  state under `/run/kexec-runtime`.
 - `patched.dtb` carries the regulator always-on fix used by kexec tests.
 - Before each kexec test jump, the host scripts pin stock Android's
   `mm_infra` power domain on through genpd/runtime PM. This avoids the first
   kexec boot entering the new kernel with `mm_infra` off and hanging when
   `mtk-scpsys-mt6895` first touches `mminfra_config`.
 - Wi-Fi module bring-up now recreates the needed Android dynamic partition
-  mappings from the lean/Ubuntu runtime, mounts `/vendor` and `/vendor_dlkm`,
+  mappings from the direct-root Ubuntu runtime, mounts `/vendor` and `/vendor_dlkm`,
   and loads modules from those mounted paths. The kexec cmdline keeps
   `firmware_class.path=/vendor/firmware`; `build_patched_mbox_initrd.sh` can
   optionally embed early firmware under `/vendor/firmware` in the GKI ramdisk
   by setting `WIFI_FIRMWARE_DIR`.
-- Lean USB ADB may need a UDC replug after kexec. `src/kxsh.sh` records USB mode
-  and state, writes the MTK controller mode node, binds `11201000.usb0`, and
-  rebinds the UDC until the state becomes `configured`.
-- Ubuntu direct-root starts systemd by execing `/sbin/init`. The old phase-A
-  PID 1 fallback has been removed; use the lean runtime as the rescue path.
+- Ubuntu direct-root starts systemd by execing `/sbin/init`. The stock rescue
+  service is the recovery control plane if Ubuntu fails.
 - Ubuntu hardware bring-up is managed by split systemd units. `kexec-wifi.service`
-  only brings up the Wi-Fi hardware; `wpa_supplicant@wlan0.service` and
+  only brings up the Wi-Fi hardware; `kexec-wpa-supplicant.service` and
   `systemd-networkd.service` handle AP association and DHCP when
   `/etc/wpa_supplicant/wpa_supplicant-wlan0.conf` exists.
 - OpenSSH server is installed and enabled in the Ubuntu rootfs. It uses the
@@ -85,10 +78,11 @@ after kexec.
 
 - Do not run `fastboot reboot recovery` on xaga; it can leave the BCB set to
   `boot-recovery`.
-- Keep `panic_after` nonzero while debugging. Use a larger value such as `600`
-  for Wi-Fi tests so the panic timer does not interrupt long power-on waits.
-- Do not repeatedly kexec after a failed boot without collecting pstore or lean
-  logs. Ramoops is small and useful evidence is easy to overwrite.
+- Production defaults `panic_after` to `0` (disabled). Host test loops pass a
+  nonzero value explicitly; use at least `600` for long Wi-Fi tests.
+- Do not repeatedly kexec after a failed boot without collecting pstore and
+  `/var/log/kexec-runtime`. Ramoops is small and useful evidence is easy to
+  overwrite.
 
 ## Stock Rescue
 
@@ -128,8 +122,10 @@ If the reverse tunnel is up, connect from `usjgw` with:
 ssh -p 22023 root@127.0.0.1
 ```
 
-The helper `/data/local/tmp/stock-rescue/reboot-to-ubuntu.sh` reuses the staged
-stock kexec payload under `/data/local/tmp` to jump back into Ubuntu.
+The helper `/data/local/tmp/stock-rescue/reboot-to-ubuntu.sh` is the single
+stock-side launcher. It prepares the Ubuntu target, verifies and pins
+`mm_infra`, derives a complete cmdline from stock cmdline/bootconfig, loads the
+staged payload, and jumps into Ubuntu.
 
 ## Requirements
 
@@ -190,7 +186,8 @@ patches/aosp-init-kxsh-early-handoff.patch
 
 It applies to `sources/android-12.1`. The patch adds an early `/kxshbin
 --prepare` path before `DoFirstStageMount()`. On success, init frees the old
-ramdisk and execs `/kexec/lean/busybox sh /kexec/lean/kxsh.sh`; otherwise it continues to
+ramdisk and execs
+`/kexec/usr/local/libexec/kexec/boot_ubuntu_rootfs`; otherwise it continues to
 the normal Android handoff.
 
 Prebuilt runtime-critical binaries:
@@ -200,7 +197,7 @@ prebuilt/init_first_stage_kxsh
     Rebuilt static AOSP first-stage init with the /kxshbin early handoff.
 
 prebuilt/adbd
-    Lean USB-only adbd.
+    Ubuntu USB-only adbd.
 ```
 
 Rebuild `prebuilt/init_first_stage_kxsh` after changing the AOSP init patch:
@@ -227,14 +224,14 @@ Full rebuild from the connected stock Android device:
 
 ```bash
 cd /home/in/work/kernels
-ADB=adb.exe STOCK_SERIAL=U89PBYJBFQKNLZEY RUN_MODE=lean MAX=4 \
+ADB=adb.exe STOCK_SERIAL=U89PBYJBFQKNLZEY RUN_MODE=ubuntu MAX=4 \
   bash scripts/host/full_rebuild_from_device.sh
 ```
 
 This pulls `boot${slot}` and `vendor_boot${slot}` from the current slot, rebuilds
 the combined mbox initrd, installs the linux partition runtime, installs the
-kexec launcher payload, and runs the selected test. Use `RUN_MODE=ubuntu` to
-switch to the Ubuntu rootfs test, or `RUN_MODE=none` to stop after installation.
+kexec launcher payload, and runs the Ubuntu rootfs test. Use `RUN_MODE=none`
+to stop after installation.
 Set `INSTALL_UBUNTU=1 ROOTFS_TAR=/path/to/ubuntu-rootfs.tar.gz` to reinstall
 the Ubuntu rootfs into the linux partition root during the same run.
 
@@ -246,7 +243,7 @@ bash scripts/host/build_gki_base_initrd.sh
 bash scripts/host/build_vendor_base_initrd.sh
 ```
 
-Build the normal lean initrd:
+Build the normal direct-root initrd:
 
 ```bash
 bash scripts/host/build_system_initrd.sh
@@ -311,9 +308,9 @@ ADB=adb.exe ROOTFS_TAR=ubuntu-rootfs.tar.gz \
 ```
 
 This mounts the linux partition under stock Android at `/mnt/linux_kexec`,
-preserves `/mnt/linux_kexec/lean`, removes the old Ubuntu rootfs contents by
-default, and extracts the tarball into the partition root. Set `WIPE_UBUNTU=0`
-to overlay without deleting existing Ubuntu files.
+removes the old Ubuntu rootfs contents by default, and extracts the tarball
+into the partition root. Set `WIPE_UBUNTU=0` to overlay without deleting
+existing Ubuntu files.
 
 Install the linux partition runtime:
 
@@ -323,9 +320,11 @@ ADB=adb.exe bash scripts/host/install_linux_runtime.sh
 ```
 
 This mounts the linux partition under stock Android at `/mnt/linux_kexec`,
-pushes files through `/data/local/tmp/linux_runtime_stage`, copies lean runtime
-files into `/mnt/linux_kexec/lean`, and removes the staging directory. At kexec
-boot, the same partition is mounted at `/kexec`.
+pushes files through `/data/local/tmp/kexec_runtime_stage`, installs programs
+under `/mnt/linux_kexec/usr/local/libexec/kexec`, installs systemd units and
+configuration into the Ubuntu root, then removes the obsolete
+`/mnt/linux_kexec/lean` tree. At kexec boot, the partition is mounted at
+`/kexec`.
 
 Install the kexec payload:
 
@@ -352,7 +351,7 @@ vendor/vendor_dlkm mapping and mounts
 Ubuntu USB ADB
 USB/adbd sampler
 optional Wi-Fi module bring-up
-wpa_supplicant@wlan0 and systemd-networkd networking
+kexec-wpa-supplicant and systemd-networkd networking
 OpenSSH server
 ```
 
@@ -411,9 +410,8 @@ apt-get update
 
 ### MT6895 pre-kexec mm_infra cleanup
 
-`scripts/host/kexec_adb_until_lean.sh` and
-`scripts/host/kexec_adb_until_ubuntu.sh` run this step automatically before
-`kexec -l/-e`:
+The stock launcher used by `scripts/host/kexec_adb_until_ubuntu.sh` runs this
+step automatically before `kexec -l/-e`:
 
 ```sh
 echo on > /sys/devices/platform/disable_unused/disable_unused:disable-unused-pd-mm_infra/power/control
@@ -429,33 +427,6 @@ Run it manually if needed:
 ```bash
 ADB=adb.exe STOCK_SERIAL=U89PBYJBFQKNLZEY \
   bash scripts/host/pre_kexec_mminfra_on.sh
-```
-
-Disable it only for regression testing:
-
-```bash
-PRE_KEXEC_MMINFRA_ON=0 bash scripts/host/kexec_adb_until_lean.sh
-```
-
-Lean ADB boot, using the mbox initrd by default:
-
-```bash
-cd /home/in/work/kernels
-ADB=adb.exe STOCK_SERIAL=U89PBYJBFQKNLZEY PANIC_AFTER=600 \
-  bash scripts/host/kexec_adb_until_lean.sh \
-  work/output/combined_ramdisk_kexec_system_mbox.lz4 4
-```
-
-Success marker:
-
-```text
-*** LEAN ADB IS UP (serial 0123456789abcdef) ***
-```
-
-Open a lean shell:
-
-```bash
-adb.exe -s 0123456789abcdef shell
 ```
 
 Ubuntu direct-root boot:
@@ -481,28 +452,27 @@ Early-death retry policy:
 
 - retry only when the last valid pstore kernel log line contains
   `mtk_scpsys_mt6895`;
-- stop immediately for any other pre-kxsh failure.
+- stop immediately for any other failure before the direct-root handoff.
 
 ## Runtime Logs
 
-From lean:
+Persistent direct-root logs:
 
 ```text
-/kexec/lean/kxsh.log
-/kexec/lean/adbd.log
-/kexec/lean/wifi_bringup.log
-/kexec/lean/dropbear.log
-/kexec/lean/boot_ubuntu_rootfs.log
-/kexec/lean/ubuntu_phase_a.log
-/kexec/lean/adbd_ubuntu.log
+/var/log/kexec-runtime/boot-rootfs.log
+/var/log/kexec-runtime/ubuntu-runtime.log
+/var/log/kexec-runtime/adbd.log
+/var/log/kexec-runtime/wifi-bringup.log
+/var/log/kexec-runtime/dmesg-wifi-before.log
+/var/log/kexec-runtime/dmesg-wifi-after.log
 ```
 
 In Ubuntu, systemd unit state is the primary runtime view:
 
 ```sh
 systemctl status kexec-adbd.service kexec-wifi.service \
-  wpa_supplicant@wlan0.service systemd-networkd.service ssh.service
-journalctl -u kexec-wifi.service -u wpa_supplicant@wlan0.service -b --no-pager
+  kexec-wpa-supplicant.service systemd-networkd.service ssh.service
+journalctl -u kexec-wifi.service -u kexec-wpa-supplicant.service -b --no-pager
 ```
 
 For the user-space proxy and container stack:
@@ -515,9 +485,8 @@ docker info
 ```
 
 Watchdog mode is controlled by `/etc/xaga-watchdog.conf` in the Ubuntu rootfs.
-Both modes use the shell watchdog loop in `/lean/lib/kexec/watchdog.sh`; the old
-C watchdog feeder is no longer installed. Keep development sessions in the
-default unconditional shell feed mode:
+Both modes use the installed shell watchdog helper. Keep development sessions
+in the default unconditional feed mode:
 
 ```sh
 WATCHDOG_MODE=dev
@@ -533,7 +502,7 @@ WATCHDOG_MODE=unattended
 WATCHDOG_DRY_RUN=1
 WATCHDOG_HEALTH_URLS="https://your-health-endpoint.example/ping"
 systemctl restart kexec-watchdog.service
-cat /lean/run/watchdog_health.status
+cat /run/kexec-runtime/watchdog-health
 journalctl -u kexec-watchdog.service -b --no-pager
 ```
 
@@ -545,26 +514,25 @@ reset the device.
 From stock Android after reboot:
 
 ```bash
-adb.exe shell "su -c 'mkdir -p /mnt/linux_kexec; mount | grep -q \" /mnt/linux_kexec \" || mount -t ext4 -o rw,noatime /dev/block/by-name/linux /mnt/linux_kexec 2>/dev/null || mount -t ext4 -o rw,noatime /dev/block/sdc88 /mnt/linux_kexec; ls -lh /mnt/linux_kexec; tail -120 /mnt/linux_kexec/lean/kxsh.log'"
+adb.exe shell "su -c 'mkdir -p /mnt/linux_kexec; mount | grep -q \" /mnt/linux_kexec \" || mount -t ext4 -o rw,noatime /dev/block/by-name/linux /mnt/linux_kexec 2>/dev/null || mount -t ext4 -o rw,noatime /dev/block/sdc88 /mnt/linux_kexec; tail -120 /mnt/linux_kexec/var/log/kexec-runtime/boot-rootfs.log'"
 ```
 
 Useful markers:
 
 ```text
 kexec-system-init: prepare linux runtime begin
-kexec-system-init: mounted linux root at /kexec, lean runtime at /kexec/lean
+kexec-system-init: mounted linux root at /kexec, boot helper at /kexec/usr/local/libexec/kexec/boot_ubuntu_rootfs
 kexec-system-init: prepare linux runtime ok
-kexec-system-init: entered /kexec/lean/kxsh.sh
-kexec-system-init: adbd published FunctionFS endpoints
-kexec-system-init: host enumerated (udc state=configured
-kexec-system-init: starting dropbear on 0.0.0.0:22
+boot-ubuntu-rootfs: begin direct rootfs newroot=/kexec init=/sbin/init
+boot-ubuntu-rootfs: early watchdog armed
+boot-ubuntu-rootfs: moving mounts and switching root
 ```
 
 ## Wi-Fi
 
 Module and firmware bring-up is handled by `scripts/device/wifi_bringup.sh`.
-It is installed as `/lean/wifi_bringup.sh` and is run by
-`kexec-wifi.service` unless `/lean/ubuntu_wifi` disables it.
+It is installed as `/usr/local/libexec/kexec/wifi_bringup.sh` and is run by
+`kexec-wifi.service` unless `/etc/kexec-runtime/wifi_enabled` disables it.
 
 The intended production network path is `wlan0` over Wi-Fi 6. USB is useful as
 the rescue/control plane for ADB and low-rate package maintenance, but it is
@@ -585,21 +553,18 @@ The same pstore window contained repeated WLAN/MDDP messages:
 Treat Wi-Fi as functional but not yet production-qualified until repeated
 high-throughput IPv4/IPv6 tests pass without pstore crashes.
 
-Run manually from lean or Ubuntu:
+Run manually from Ubuntu:
 
 ```bash
-adb.exe -s 0123456789abcdef shell \
-  'KEXEC_BASE=/kexec/lean WIFI_POWER_WAIT_SECS=420 /kexec/lean/busybox sh /kexec/lean/wifi_bringup.sh'
-
 adb.exe -s ubuntu012345678 shell \
-  'KEXEC_BASE=/lean WIFI_POWER_WAIT_SECS=420 /lean/busybox sh /lean/wifi_bringup.sh'
+  'WIFI_POWER_WAIT_SECS=420 /bin/sh /usr/local/libexec/kexec/wifi_bringup.sh'
 ```
 
 Check progress:
 
 ```sh
-cat /kexec/lean/wifi_load_progress.txt
-tail -220 /kexec/lean/wifi_bringup.log
+cat /var/lib/kexec-runtime/wifi-status
+tail -220 /var/log/kexec-runtime/wifi-bringup.log
 ls /sys/class/net
 ```
 
@@ -614,14 +579,14 @@ ap0
 ```
 
 After `wlan0` exists, Ubuntu uses the normal
-`wpa_supplicant@wlan0.service` plus `systemd-networkd` path. The installed
+`kexec-wpa-supplicant.service` plus `systemd-networkd` path. The installed
 systemd network/link files set DHCP for `wlan0` and pin a stable MAC address
 before association. Create the AP configuration once:
 
 ```sh
 wpa_passphrase "SSID" "passphrase" > /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
 chmod 600 /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
-systemctl restart wpa_supplicant@wlan0.service systemd-networkd.service
+systemctl restart kexec-wpa-supplicant.service systemd-networkd.service
 ```
 
 `/etc/systemd/network/25-kexec-wlan0.network` enables DHCP for `wlan0`.
@@ -633,12 +598,6 @@ Check connection state with:
 networkctl status wlan0
 ip addr show wlan0
 resolvectl status 2>/dev/null || cat /etc/resolv.conf
-```
-
-Busybox DHCP is still available from the lean runtime for rescue testing:
-
-```sh
-/kexec/lean/bin/udhcpc -i wlan0
 ```
 
 For stability testing, reduce variables before running high-throughput service
@@ -666,7 +625,7 @@ return to stock Android.
 The repository default is systemd as PID 1. The Ubuntu rootfs enters
 `multi-user.target` and starts split kexec units for time keeping, watchdog
 feeding, panic timeout, vendor partition mounts, USB ADB, Wi-Fi hardware
-bring-up, and the standard `wpa_supplicant@wlan0` plus `systemd-networkd`
+bring-up, and `kexec-wpa-supplicant` plus `systemd-networkd`
 networking path.
 
 The active Ubuntu boot path is intentionally single-path:
@@ -675,22 +634,21 @@ The active Ubuntu boot path is intentionally single-path:
 boot_ubuntu_rootfs -> /sbin/init -> multi-user.target
 ```
 
-The old phase-A PID 1, `kexec-phase-a.service`, and
-`/lean/ubuntu_phase_a_init.sh` helper entrypoint have been removed. Split
-systemd units now execute dedicated `/lean/bin/kexec-*` helpers directly. Use
-the lean runtime as the rescue path if Ubuntu systemd does not come up.
+The old phase-A PID 1 and `kexec-phase-a.service` have been removed. Split
+systemd units execute `/usr/local/libexec/kexec/bin/kexec-*`. Use stock rescue
+if Ubuntu systemd does not come up.
 
 ## Layout
 
 ```text
-src/                        static bootstrap, lean shell, watchdog, switch-root helpers
+src/                        static ramdisk bootstrap and direct-root helper
 scripts/host/               host-side build/install/boot/test helpers
 scripts/device/bin/         per-service Ubuntu kexec helper entrypoints
 scripts/device/lib/kexec/   shared helper libraries for the kexec units
-scripts/device/             device-side scripts installed into /kexec/lean
+scripts/device/             helpers installed into /usr/local/libexec/kexec
 scripts/lib/                shared host-side shell configuration
 patches/                    source patches kept outside repo-managed source trees
-prebuilt/                   init_first_stage_kxsh, adbd, busybox, Dropbear
+prebuilt/                   first-stage init, Ubuntu adbd, stock rescue tools
 sources/                    AOSP/kernel/tool source trees
 work/                       generated local state: logs, output, vendor, temp
 old/                        archived boot images, old probes, experiments
@@ -699,7 +657,6 @@ old/                        archived boot images, old probes, experiments
 ## Remaining Work
 
 ```text
-make kexec reach kxsh more consistently
 validate repeated systemd split-unit Ubuntu boots
 add and validate production wlan0 AP credentials
 qualify wlan0 as the production Wi-Fi 6 data plane under sustained TCP load

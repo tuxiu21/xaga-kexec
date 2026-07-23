@@ -6,7 +6,7 @@ Before=kexec-adbd.service kexec-wifi.service multi-user.target
 
 [Service]
 Type=oneshot
-ExecStart=/lean/bin/kexec-vendor-mount
+ExecStart=/usr/local/libexec/kexec/bin/kexec-vendor-mount
 RemainAfterExit=yes
 
 [Install]

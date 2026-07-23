@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Boot/capture loop for Ubuntu rootfs. In this mode lean kxsh skips lean adbd,
-# switches root, and the only expected ADB enumeration is Ubuntu adbd.
+# Boot/capture loop for the direct-root Ubuntu handoff.
 set -u
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
@@ -10,7 +9,6 @@ INITRD_DEV="$(basename "$INITRD")"
 DTB_DEV="${DTB_DEV:-patched.dtb}"
 MAX="${2:-8}"
 UBUNTU_SERIAL="${UBUNTU_SERIAL:-ubuntu012345678}"
-LEAN_SERIAL="${LEAN_SERIAL:-0123456789abcdef}"
 PANIC_AFTER="${PANIC_AFTER:-900}"
 KEXEC_EXTRA_CMDLINE="${KEXEC_EXTRA_CMDLINE:-}"
 UBUNTU_WIFI="${UBUNTU_WIFI:-1}"
@@ -18,14 +16,15 @@ UBUNTU_WIFI_SKIP_MODULES="${UBUNTU_WIFI_SKIP_MODULES:-}"
 UBUNTU_WIFI_WAIT_READY="${UBUNTU_WIFI_WAIT_READY:-1}"
 UBUNTU_WIFI_WAIT="${UBUNTU_WIFI_WAIT:-260}"
 NOEXEC_MAX="${NOEXEC_MAX:-3}"
-PRE_KEXEC_MMINFRA_ON="${PRE_KEXEC_MMINFRA_ON:-1}"
 ADB_TIMEOUT="${ADB_TIMEOUT:-8s}"
 KEXEC_TRIGGER_TIMEOUT="${KEXEC_TRIGGER_TIMEOUT:-20s}"
 STOCK_GRACE="${STOCK_GRACE:-10}"
 LINUX_DEV="${LINUX_DEV:-/dev/block/by-name/linux}"
 LINUX_DEV_FALLBACK="${LINUX_DEV_FALLBACK:-/dev/block/sdc88}"
 LINUX_MOUNT="${LINUX_MOUNT:-/mnt/linux_kexec}"
-LEAN_DIR="${LEAN_DIR:-$LINUX_MOUNT/lean}"
+RUNTIME_DIR="${RUNTIME_DIR:-$LINUX_MOUNT/usr/local/libexec/kexec}"
+REMOTE_LOG_DIR="${REMOTE_LOG_DIR:-$LINUX_MOUNT/var/log/kexec-runtime}"
+REMOTE_STATE_DIR="${REMOTE_STATE_DIR:-$LINUX_MOUNT/var/lib/kexec-runtime}"
 OUT="$LOG_ROOT/kexec_adb_until_ubuntu_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$OUT"
 
@@ -37,7 +36,7 @@ adb_devices() { timeout "$ADB_TIMEOUT" "$ADB" devices 2>/dev/null | tr -d '\r'; 
 serial_state() { adb_devices | awk -v s="$1" '$1==s{print $2}'; }
 ubuntu_up() { [ "$(serial_state "$UBUNTU_SERIAL")" = "device" ]; }
 stock_up() { [ -n "$STOCK_SERIAL" ] && [ "$(serial_state "$STOCK_SERIAL")" = "device" ]; }
-detect_stock_serial() { adb_devices | awk -v u="$UBUNTU_SERIAL" -v l="$LEAN_SERIAL" 'NR>1 && $2=="device" && $1!=u && $1!=l {print $1; exit}'; }
+detect_stock_serial() { adb_devices | awk -v u="$UBUNTU_SERIAL" 'NR>1 && $2=="device" && $1!=u {print $1; exit}'; }
 
 adb_root_shell()
 {
@@ -47,24 +46,6 @@ adb_root_shell()
     else
         $ADB shell "su -c '$script'"
     fi
-}
-
-prepare_ubuntu_boot()
-{
-    adb_root_shell "
-        set -e
-        mkdir -p '$LINUX_MOUNT'
-        if ! grep -q ' $LINUX_MOUNT ' /proc/mounts; then
-            mount -t ext4 -o rw,noatime '$LINUX_DEV' '$LINUX_MOUNT' 2>/dev/null ||
-                mount -t ext4 -o rw,noatime '$LINUX_DEV_FALLBACK' '$LINUX_MOUNT'
-        fi
-        PANIC_AFTER='$PANIC_AFTER' \
-        UBUNTU_WIFI='$UBUNTU_WIFI' \
-        UBUNTU_WIFI_SKIP_MODULES='$UBUNTU_WIFI_SKIP_MODULES' \
-        LINUX_MOUNT='$LINUX_MOUNT' \
-        LEAN_DIR='$LEAN_DIR' \
-            '$LEAN_DIR/prepare_ubuntu_kexec_boot.sh'
-    "
 }
 
 probe_ubuntu_root() {
@@ -78,28 +59,28 @@ probe_ubuntu_root() {
 
 pull_from_stock() {
     local r="$1"
-    adb_root_shell "mkdir -p $LINUX_MOUNT; grep -q \" $LINUX_MOUNT \" /proc/mounts || mount -t ext4 -o rw,noatime $LINUX_DEV $LINUX_MOUNT 2>/dev/null || mount -t ext4 -o rw,noatime $LINUX_DEV_FALLBACK $LINUX_MOUNT; cat $LEAN_DIR/kxsh.log 2>/dev/null" > "$OUT/round_${r}_kxsh.log" 2>/dev/null
-    adb_root_shell "cat $LEAN_DIR/boot_ubuntu_rootfs.log 2>/dev/null" > "$OUT/round_${r}_boot_ubuntu_rootfs.log" 2>/dev/null
-    adb_root_shell "cat $LEAN_DIR/ubuntu_phase_a.log 2>/dev/null" > "$OUT/round_${r}_ubuntu_phase_a.log" 2>/dev/null
-    adb_root_shell "cat $LEAN_DIR/adbd_ubuntu.log 2>/dev/null" > "$OUT/round_${r}_adbd_ubuntu.log" 2>/dev/null
-    adb_root_shell "cat $LEAN_DIR/usb_adbd_sampler.log 2>/dev/null" > "$OUT/round_${r}_usb_adbd_sampler.log" 2>/dev/null
-    adb_root_shell "cat $LEAN_DIR/wifi_bringup.log 2>/dev/null" > "$OUT/round_${r}_wifi_bringup.log" 2>/dev/null
-    adb_root_shell "cat $LEAN_DIR/wifi_load_progress.txt 2>/dev/null" > "$OUT/round_${r}_wifi_load_progress.txt" 2>/dev/null
-    adb_root_shell "cat $LEAN_DIR/dmesg_wifi_before.log 2>/dev/null" > "$OUT/round_${r}_dmesg_wifi_before.log" 2>/dev/null
-    adb_root_shell "cat $LEAN_DIR/dmesg_wifi_after.log 2>/dev/null" > "$OUT/round_${r}_dmesg_wifi_after.log" 2>/dev/null
+    adb_root_shell "mkdir -p $LINUX_MOUNT; grep -q \" $LINUX_MOUNT \" /proc/mounts || mount -t ext4 -o rw,noatime $LINUX_DEV $LINUX_MOUNT 2>/dev/null || mount -t ext4 -o rw,noatime $LINUX_DEV_FALLBACK $LINUX_MOUNT; cat $REMOTE_LOG_DIR/bootstrap.log 2>/dev/null" > "$OUT/round_${r}_kxsh.log" 2>/dev/null
+    adb_root_shell "cat $REMOTE_LOG_DIR/boot-rootfs.log 2>/dev/null" > "$OUT/round_${r}_boot_ubuntu_rootfs.log" 2>/dev/null
+    adb_root_shell "cat $REMOTE_LOG_DIR/ubuntu-runtime.log 2>/dev/null" > "$OUT/round_${r}_ubuntu_phase_a.log" 2>/dev/null
+    adb_root_shell "cat $REMOTE_LOG_DIR/adbd.log 2>/dev/null" > "$OUT/round_${r}_adbd_ubuntu.log" 2>/dev/null
+    adb_root_shell "cat $REMOTE_LOG_DIR/usb-adbd-sampler.log 2>/dev/null" > "$OUT/round_${r}_usb_adbd_sampler.log" 2>/dev/null
+    adb_root_shell "cat $REMOTE_LOG_DIR/wifi-bringup.log 2>/dev/null" > "$OUT/round_${r}_wifi_bringup.log" 2>/dev/null
+    adb_root_shell "cat $REMOTE_STATE_DIR/wifi-status 2>/dev/null" > "$OUT/round_${r}_wifi_load_progress.txt" 2>/dev/null
+    adb_root_shell "cat $REMOTE_LOG_DIR/dmesg-wifi-before.log 2>/dev/null" > "$OUT/round_${r}_dmesg_wifi_before.log" 2>/dev/null
+    adb_root_shell "cat $REMOTE_LOG_DIR/dmesg-wifi-after.log 2>/dev/null" > "$OUT/round_${r}_dmesg_wifi_after.log" 2>/dev/null
 }
 
 pull_from_ubuntu() {
     local r="$1"
-    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/kxsh.log 2>/dev/null' > "$OUT/round_${r}_kxsh.log" 2>/dev/null
-    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/boot_ubuntu_rootfs.log 2>/dev/null' > "$OUT/round_${r}_boot_ubuntu_rootfs.log" 2>/dev/null
-    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/ubuntu_phase_a.log 2>/dev/null' > "$OUT/round_${r}_ubuntu_phase_a.log" 2>/dev/null
-    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/adbd_ubuntu.log 2>/dev/null' > "$OUT/round_${r}_adbd_ubuntu.log" 2>/dev/null
-    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/usb_adbd_sampler.log 2>/dev/null' > "$OUT/round_${r}_usb_adbd_sampler.log" 2>/dev/null
-    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/wifi_bringup.log 2>/dev/null' > "$OUT/round_${r}_wifi_bringup.log" 2>/dev/null
-    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/wifi_load_progress.txt 2>/dev/null' > "$OUT/round_${r}_wifi_load_progress.txt" 2>/dev/null
-    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/dmesg_wifi_before.log 2>/dev/null' > "$OUT/round_${r}_dmesg_wifi_before.log" 2>/dev/null
-    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/dmesg_wifi_after.log 2>/dev/null' > "$OUT/round_${r}_dmesg_wifi_after.log" 2>/dev/null
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/log/kexec-runtime/bootstrap.log 2>/dev/null' > "$OUT/round_${r}_kxsh.log" 2>/dev/null
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/log/kexec-runtime/boot-rootfs.log 2>/dev/null' > "$OUT/round_${r}_boot_ubuntu_rootfs.log" 2>/dev/null
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/log/kexec-runtime/ubuntu-runtime.log 2>/dev/null' > "$OUT/round_${r}_ubuntu_phase_a.log" 2>/dev/null
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/log/kexec-runtime/adbd.log 2>/dev/null' > "$OUT/round_${r}_adbd_ubuntu.log" 2>/dev/null
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/log/kexec-runtime/usb-adbd-sampler.log 2>/dev/null' > "$OUT/round_${r}_usb_adbd_sampler.log" 2>/dev/null
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/log/kexec-runtime/wifi-bringup.log 2>/dev/null' > "$OUT/round_${r}_wifi_bringup.log" 2>/dev/null
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/lib/kexec-runtime/wifi-status 2>/dev/null' > "$OUT/round_${r}_wifi_load_progress.txt" 2>/dev/null
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/log/kexec-runtime/dmesg-wifi-before.log 2>/dev/null' > "$OUT/round_${r}_dmesg_wifi_before.log" 2>/dev/null
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/log/kexec-runtime/dmesg-wifi-after.log 2>/dev/null' > "$OUT/round_${r}_dmesg_wifi_after.log" 2>/dev/null
 }
 
 pull_pstore_from_stock() {
@@ -165,7 +146,7 @@ wait_ubuntu_wifi_done() {
             sleep 1
             continue
         fi
-        status="$(timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/wifi_load_progress.txt 2>/dev/null' 2>/dev/null | tr -d '\r\n')"
+        status="$(timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/lib/kexec-runtime/wifi-status 2>/dev/null' 2>/dev/null | tr -d '\r\n')"
         case "$status" in
             READY|NO_WLAN_IFACE|WMTWIFI_MISSING)
                 say "round $r: Wi-Fi bringup result: $status"
@@ -178,41 +159,9 @@ wait_ubuntu_wifi_done() {
         say "round $r: stock returned after Ubuntu Wi-Fi wait timeout"
         return 2
     fi
-    status="$(timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /lean/wifi_load_progress.txt 2>/dev/null' 2>/dev/null | tr -d '\r\n')"
+    status="$(timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/lib/kexec-runtime/wifi-status 2>/dev/null' 2>/dev/null | tr -d '\r\n')"
     say "round $r: Wi-Fi bringup did not finish before timeout; last status=${status:-<empty>}"
     return 1
-}
-
-build_cmdline() {
-    local base_cmdline initrd_local initrd_kib bootconfig_args normal_args slot_suffix
-    base_cmdline=""
-    for _ in $(seq 1 5); do
-        base_cmdline="$($ADB shell "su -c 'cat /proc/cmdline'" 2>/dev/null | tr -d '\r\n')"
-        [ -n "$base_cmdline" ] && break
-        sleep 1
-    done
-    if [ -z "$base_cmdline" ]; then
-        say "failed to read non-empty /proc/cmdline"
-        return 1
-    fi
-    initrd_local="$INITRD"
-    case "$initrd_local" in /*) ;; *) initrd_local="$ROOT/$INITRD";; esac
-    if [ -f "$initrd_local" ]; then
-        initrd_kib="$(( ($(wc -c < "$initrd_local") + 1023) / 1024 ))"
-        base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )debug_ext\\.initrd_size=[^ ]*/ /g")"
-        base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )firmware_class\\.path=[^ ]*/ /g")"
-        base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )arm64\\.nomte( |$)/ /g")"
-        base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )slub_debug=[^ ]*/ /g")"
-        base_cmdline="$(printf '%s\n' "$base_cmdline" | sed -E "s/(^| )init_on_free=[^ ]*/ /g")"
-        base_cmdline="$base_cmdline debug_ext.initrd_size=$initrd_kib"
-    fi
-    # Preserve the active Android slot in the synthetic kexec cmdline.
-    slot_suffix="$($ADB shell "su -c 'getprop ro.boot.slot_suffix'" 2>/dev/null | tr -d '\r\n')"
-    [ -n "$slot_suffix" ] || slot_suffix="_a"
-    bootconfig_args="$($ADB shell "su -c 'cat /proc/bootconfig 2>/dev/null'" | tr -d '\r' | awk '
-      /^androidboot[.]/ { key=$1; sub(/^[^=]*=[[:space:]]*/, ""); gsub(/["[:space:]]/, ""); print key "=" $0 }' | tr '\n' ' ')"
-    normal_args="$bootconfig_args androidboot.force_normal_boot=1 androidboot.mode=normal androidboot.bootmode=normal androidboot.slot_suffix=$slot_suffix androidboot.hardware=mt6895 androidboot.init_fatal_panic=true androidboot.init_fatal_reboot_target=bootloader firmware_class.path=/vendor/firmware loglevel=7 ignore_loglevel printk.devkmsg=on"
-    printf '%s\n' "$base_cmdline $normal_args $KEXEC_EXTRA_CMDLINE"
 }
 
 print_ubuntu_logs() {
@@ -264,24 +213,11 @@ for r in $(seq 1 "$MAX"); do
         say "round $r: detected stock serial=${STOCK_SERIAL:-<empty>}"
     fi
 
-    say "round $r: clearing pstore + Ubuntu logs, panic_after=${PANIC_AFTER}s wifi=${UBUNTU_WIFI}"
-    prepare_ubuntu_boot >/dev/null 2>&1
-
-    cmdline="$(build_cmdline)"
-    printf '%s\n' "$cmdline" > "$OUT/round_${r}_cmdline.txt"
-
-    if [ "$PRE_KEXEC_MMINFRA_ON" = "1" ]; then
-        say "round $r: pin stock mm_infra on before kexec"
-        if ! STOCK_SERIAL="$STOCK_SERIAL" ADB="$ADB" bash "$ROOT/scripts/host/pre_kexec_mminfra_on.sh" "$STOCK_SERIAL" > "$OUT/round_${r}_pre_kexec_mminfra.log" 2>&1; then
-            say "round $r: pre-kexec mm_infra pin failed; refusing to kexec"
-            cat "$OUT/round_${r}_pre_kexec_mminfra.log"
-            exit 6
-        fi
-    fi
-
     nonce="UBUNTU-r${r}-$(date +%s)-${RANDOM}"
-    say "round $r: kexec into Ubuntu rootfs path (nonce=$nonce)"
-    timeout "$KEXEC_TRIGGER_TIMEOUT" "$ADB" shell "su -c 'cd /data/local/tmp && echo 0 > /proc/sys/kernel/kptr_restrict && ./kexec -c -l kernel --initrd=$INITRD_DEV ${DTB_DEV:+--dtb=$DTB_DEV} --append=\"$cmdline\" && sync && echo $nonce > /dev/kmsg && echo 1 > /dev/watchdog 2>/dev/null && echo 1 > /dev/watchdog0 2>/dev/null; ./kexec -f -e'" > "$OUT/round_${r}_kexec_trigger.log" 2>&1
+    say "round $r: install and invoke the stock direct-root launcher (nonce=$nonce)"
+    "$ADB" push "$ROOT/scripts/stock/reboot-to-ubuntu.sh" \
+        /data/local/tmp/reboot-to-ubuntu.sh >/dev/null
+    timeout "$KEXEC_TRIGGER_TIMEOUT" "$ADB" shell "su -c 'chmod 0755 /data/local/tmp/reboot-to-ubuntu.sh; echo $nonce > /dev/kmsg; INITRD=/data/local/tmp/$INITRD_DEV DTB=/data/local/tmp/$DTB_DEV PANIC_AFTER=$PANIC_AFTER UBUNTU_WIFI=$UBUNTU_WIFI UBUNTU_WIFI_SKIP_MODULES=\"$UBUNTU_WIFI_SKIP_MODULES\" KEXEC_EXTRA_CMDLINE=\"$KEXEC_EXTRA_CMDLINE\" /data/local/tmp/reboot-to-ubuntu.sh'" > "$OUT/round_${r}_kexec_trigger.log" 2>&1
     kexec_trigger_rc=$?
     say "round $r: kexec trigger adb command returned rc=$kexec_trigger_rc"
 
@@ -332,16 +268,17 @@ for r in $(seq 1 "$MAX"); do
     pull_pstore_from_stock "$r"
     print_ubuntu_logs "$r"
 
-    if [ -s "$OUT/round_${r}_kxsh.log" ] && grep -qa 'boot_ubuntu_rootfs flag present; switching root before lean adb' "$OUT/round_${r}_kxsh.log"; then
-        say "round $r: reached kxsh Ubuntu handoff path, but Ubuntu ADB did not validate -> $OUT (stopping)"
+    if [ -s "$OUT/round_${r}_boot_ubuntu_rootfs.log" ] &&
+       grep -qa 'begin direct rootfs' "$OUT/round_${r}_boot_ubuntu_rootfs.log"; then
+        say "round $r: reached direct-root handoff, but Ubuntu ADB did not validate -> $OUT (stopping)"
         exit 0
     fi
 
     last_pstore="$(pstore_last_line "$OUT/round_${r}_console.txt")"
     if printf '%s\n' "$last_pstore" | grep -qa 'mtk_scpsys_mt6895'; then
-        say "round $r: early mtk_scpsys_mt6895 death before kxsh; retrying. last=${last_pstore:-<empty>}"
+        say "round $r: early mtk_scpsys_mt6895 death before direct-root handoff; retrying. last=${last_pstore:-<empty>}"
     else
-        say "round $r: non-scpsys failure before kxsh or Ubuntu handoff did not validate -> $OUT (stopping). last=${last_pstore:-<empty>}"
+        say "round $r: non-scpsys failure before direct-root handoff or Ubuntu did not validate -> $OUT (stopping). last=${last_pstore:-<empty>}"
         echo "===== pstore tail ====="
         grep -aoE '\[[ ]*[0-9]+\.[0-9]+\].*' "$OUT/round_${r}_console.txt" 2>/dev/null | tail -120
         echo "======================="

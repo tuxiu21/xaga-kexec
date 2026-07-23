@@ -1,16 +1,16 @@
 diff --git a/system/core/init/first_stage_init.cpp b/system/core/init/first_stage_init.cpp
-index 8ce1a0b..3d1c9a8 100644
+index c7b7b0c134..7b1407f5e2 100644
 --- a/system/core/init/first_stage_init.cpp
 +++ b/system/core/init/first_stage_init.cpp
-@@ -24,6 +24,7 @@
- #include <sys/stat.h>
+@@ -25,6 +25,7 @@
  #include <sys/sysmacros.h>
  #include <sys/types.h>
-+#include <sys/wait.h>
  #include <sys/utsname.h>
++#include <sys/wait.h>
  #include <unistd.h>
  
-@@ -82,6 +83,43 @@ void FreeRamdisk(DIR* dir, dev_t dev) {
+ #include <filesystem>
+@@ -102,6 +103,46 @@ void FreeRamdisk(DIR* dir, dev_t dev) {
      }
  }
  
@@ -57,7 +57,7 @@ index 8ce1a0b..3d1c9a8 100644
  bool ForceNormalBoot(const std::string& cmdline, const std::string& bootconfig) {
      return bootconfig.find("androidboot.force_normal_boot = \"1\"") != std::string::npos ||
             cmdline.find("androidboot.force_normal_boot=1") != std::string::npos;
-@@ -348,16 +386,22 @@ int FirstStageMain(int argc, char** argv) {
+@@ -347,18 +388,23 @@ int FirstStageMain(int argc, char** argv) {
          setenv("INIT_FORCE_DEBUGGABLE", "true", 1);
      }
  
@@ -91,7 +91,7 @@ index 8ce1a0b..3d1c9a8 100644
      }
  
      struct stat new_root_info;
-@@ -367,7 +411,7 @@ int FirstStageMain(int argc, char** argv) {
+@@ -367,7 +413,7 @@ int FirstStageMain(int argc, char** argv) {
          old_root_dir.reset();
      }
  
@@ -100,23 +100,23 @@ index 8ce1a0b..3d1c9a8 100644
          FreeRamdisk(old_root_dir.get(), old_root_info.st_dev);
      }
  
-@@ -378,14 +422,29 @@ int FirstStageMain(int argc, char** argv) {
+@@ -376,13 +422,28 @@ int FirstStageMain(int argc, char** argv) {
      setenv(kEnvFirstStageStartedAt, std::to_string(start_time.time_since_epoch().count()).c_str(),
             1);
  
 -    const char* path = "/system/bin/init";
 -    const char* args[] = {path, "selinux_setup", nullptr};
-+    const char* path = kexec_runtime_ready ? "/kexec/lean/busybox" : "/system/bin/init";
++    const char* path =
++            kexec_runtime_ready ? "/kexec/usr/local/libexec/kexec/boot_ubuntu_rootfs"
++                                : "/system/bin/init";
 +    const char* args[] = {
 +            path,
-+            kexec_runtime_ready ? "sh" : "selinux_setup",
-+            kexec_runtime_ready ? "/kexec/lean/kxsh.sh" : nullptr,
++            kexec_runtime_ready ? nullptr : "selinux_setup",
 +            nullptr,
 +    };
 +    const char* env[] = {
-+            "KEXEC_BASE=/kexec/lean",
-+            "PATH=/kexec/lean:/system/bin:/vendor/bin",
-+            "HOME=/kexec/lean/root",
++            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
++            "HOME=/root",
 +            nullptr,
 +    };
      auto fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);

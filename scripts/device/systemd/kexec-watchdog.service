@@ -6,7 +6,7 @@ Before=multi-user.target
 
 [Service]
 Type=simple
-ExecStart=/lean/bin/kexec-watchdog
+ExecStart=/usr/local/libexec/kexec/bin/kexec-watchdog
 Restart=always
 RestartSec=5
 

@@ -5,7 +5,7 @@ set -euo pipefail
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
-RUN_MODE="${RUN_MODE:-lean}"        # lean, ubuntu, none
+RUN_MODE="${RUN_MODE:-ubuntu}"      # ubuntu, none
 INSTALL_UBUNTU="${INSTALL_UBUNTU:-0}"
 MAX="${MAX:-4}"
 INITRD="${INITRD:-$OUTPUT_DIR/combined_ramdisk_kexec_system_mbox.lz4}"
@@ -75,9 +75,9 @@ pull_partition_image()
 }
 
 case "$RUN_MODE" in
-  lean|ubuntu|none) ;;
+  ubuntu|none) ;;
   *)
-    echo "RUN_MODE must be lean, ubuntu, or none" >&2
+    echo "RUN_MODE must be ubuntu or none" >&2
     exit 2
     ;;
 esac
@@ -123,10 +123,6 @@ INITRD="$INITRD" bash "$ROOT/scripts/host/install_kexec_payload.sh"
 case "$RUN_MODE" in
   none)
     say "done: built and installed payload; kexec test skipped"
-    ;;
-  lean)
-    say "run lean kexec test"
-    STOCK_SERIAL="$STOCK_SERIAL" bash "$ROOT/scripts/host/kexec_adb_until_lean.sh" "$INITRD" "$MAX"
     ;;
   ubuntu)
     say "run Ubuntu kexec test"
