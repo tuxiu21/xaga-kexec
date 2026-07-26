@@ -11,7 +11,8 @@ ORACLE_IDENTITY="${ORACLE_IDENTITY:-}"
 CONF_FILE="${CONF_FILE:-}"
 
 for path in "$ROOT/prebuilt/dropbear" "$ROOT/prebuilt/dropbearkey" "$ROOT/prebuilt/dbclient" \
-  "$ROOT/scripts/stock/stock-rescue.sh" "$ROOT/scripts/stock/reboot-to-ubuntu.sh"; do
+  "$ROOT/prebuilt/dropbear-ns" "$ROOT/scripts/stock/stock-rescue.sh" \
+  "$ROOT/scripts/stock/reboot-to-ubuntu.sh"; do
   [ -s "$path" ] || { echo "missing required file: $path" >&2; exit 1; }
 done
 
@@ -31,6 +32,7 @@ trap cleanup EXIT
 cp "$ROOT/prebuilt/dropbear" "$tmp/dropbear"
 cp "$ROOT/prebuilt/dropbearkey" "$tmp/dropbearkey"
 cp "$ROOT/scripts/stock/stock-rescue.sh" "$tmp/stock-rescue.sh"
+cp "$ROOT/prebuilt/dropbear-ns" "$tmp/dropbear-ns"
 cp "$ROOT/scripts/stock/reboot-to-ubuntu.sh" "$tmp/reboot-to-ubuntu.sh"
 cp "$AUTHORIZED_KEYS" "$tmp/authorized_keys"
 
@@ -51,14 +53,15 @@ if [ -n "$ORACLE_IDENTITY" ]; then
   cp "$ORACLE_IDENTITY" "$tmp/oracle_ed25519"
 fi
 
-chmod 0755 "$tmp/dropbear" "$tmp/dropbearkey" "$tmp/stock-rescue.sh" "$tmp/reboot-to-ubuntu.sh"
+chmod 0755 "$tmp/dropbear" "$tmp/dropbearkey" "$tmp/stock-rescue.sh" \
+  "$tmp/dropbear-ns" "$tmp/reboot-to-ubuntu.sh"
 [ ! -e "$tmp/ssh-client" ] || chmod 0755 "$tmp/ssh-client"
 chmod 0600 "$tmp/authorized_keys"
 [ ! -e "$tmp/oracle_ed25519" ] || chmod 0600 "$tmp/oracle_ed25519"
 
 echo "installing stock rescue to $REMOTE_DIR"
 "$ADB" push "$tmp/." "$REMOTE_DIR/"
-"$ADB" shell "su -c 'mkdir -p /data/adb/service.d; cp $REMOTE_DIR/stock-rescue.sh $SERVICE_PATH; chmod 0755 $SERVICE_PATH $REMOTE_DIR/stock-rescue.sh $REMOTE_DIR/reboot-to-ubuntu.sh $REMOTE_DIR/dropbear $REMOTE_DIR/dropbearkey; [ ! -e $REMOTE_DIR/ssh-client ] || chmod 0755 $REMOTE_DIR/ssh-client; chmod 0600 $REMOTE_DIR/authorized_keys; [ ! -e $REMOTE_DIR/oracle_ed25519 ] || chmod 0600 $REMOTE_DIR/oracle_ed25519; sync; ls -l $SERVICE_PATH $REMOTE_DIR'"
+"$ADB" shell "su -c 'mkdir -p /data/adb/service.d; cp $REMOTE_DIR/stock-rescue.sh $SERVICE_PATH; chmod 0755 $SERVICE_PATH $REMOTE_DIR/stock-rescue.sh $REMOTE_DIR/dropbear-ns $REMOTE_DIR/reboot-to-ubuntu.sh $REMOTE_DIR/dropbear $REMOTE_DIR/dropbearkey; [ ! -e $REMOTE_DIR/ssh-client ] || chmod 0755 $REMOTE_DIR/ssh-client; chmod 0600 $REMOTE_DIR/authorized_keys; [ ! -e $REMOTE_DIR/oracle_ed25519 ] || chmod 0600 $REMOTE_DIR/oracle_ed25519; sync; ls -l $SERVICE_PATH $REMOTE_DIR'"
 
 echo "installed. Start without reboot:"
 echo "  $ADB shell \"su -c '$SERVICE_PATH'\""

@@ -12,6 +12,7 @@ DROPBEAR_PID="${DROPBEAR_PID:-$RESCUE_DIR/dropbear.pid}"
 DROPBEAR_ED25519_KEY="${DROPBEAR_ED25519_KEY:-$RESCUE_DIR/dropbear_ed25519_host_key}"
 DROPBEAR_RSA_KEY="${DROPBEAR_RSA_KEY:-$RESCUE_DIR/dropbear_rsa_host_key}"
 AUTHORIZED_KEYS="${AUTHORIZED_KEYS:-$RESCUE_DIR/authorized_keys}"
+DROPBEAR_NS_BIN="${DROPBEAR_NS_BIN:-$RESCUE_DIR/dropbear-ns}"
 
 SSH_CLIENT_BIN="${SSH_CLIENT_BIN:-${DBCLIENT_BIN:-}}"
 SSH_CLIENT_TYPE="${SSH_CLIENT_TYPE:-dropbear}"
@@ -25,6 +26,7 @@ ORACLE_REMOTE_PORT="${ORACLE_REMOTE_PORT:-22023}"
 BOOT_WAIT_SEC="${BOOT_WAIT_SEC:-180}"
 NET_WAIT_SEC="${NET_WAIT_SEC:-180}"
 REVERSE_RETRY_SEC="${REVERSE_RETRY_SEC:-30}"
+DROPBEAR_RETRY_SEC="${DROPBEAR_RETRY_SEC:-10}"
 
 [ -r "$CONF_FILE" ] && . "$CONF_FILE"
 
@@ -72,22 +74,14 @@ install_authorized_keys()
     chmod 700 "$RESCUE_DIR/root" "$RESCUE_DIR/root/.ssh" 2>/dev/null || true
     chmod 600 "$RESCUE_DIR/root/.ssh/authorized_keys" 2>/dev/null || true
 
-    if [ -w /etc ] || touch /etc/.stock-rescue-test 2>/dev/null; then
-        rm -f /etc/.stock-rescue-test 2>/dev/null || true
-        printf 'root:x:0:0:root:%s/root:/system/bin/sh\n' "$RESCUE_DIR" > /etc/passwd 2>/dev/null || true
-        printf 'root:!:1::::::\n' > /etc/shadow 2>/dev/null || true
-        printf 'root:x:0:\n' > /etc/group 2>/dev/null || true
-        chmod 644 /etc/passwd /etc/group 2>/dev/null || true
-        chmod 600 /etc/shadow 2>/dev/null || true
-    fi
-
-    # Keep common fallback locations populated if the stock rootfs allows it.
-    for home in / /root "$RESCUE_DIR/root"; do
-        mkdir -p "$home/.ssh" 2>/dev/null || continue
-        cp "$AUTHORIZED_KEYS" "$home/.ssh/authorized_keys" 2>/dev/null || continue
-        chmod 700 "$home/.ssh" 2>/dev/null || true
-        chmod 600 "$home/.ssh/authorized_keys" 2>/dev/null || true
-    done
+    # Android's /etc is read-only and does not contain a root passwd entry.
+    # Prepare private account files; dropbear-ns bind-mounts them only in
+    # Dropbear's mount namespace, leaving the Android global /etc unchanged.
+    grep -v '^root:' /etc/passwd > "$RESCUE_DIR/passwd" 2>/dev/null || : > "$RESCUE_DIR/passwd"
+    printf 'root:x:0:0:root:%s/root:/bin/sh\n' "$RESCUE_DIR" >> "$RESCUE_DIR/passwd"
+    grep -v '^root:' /etc/group > "$RESCUE_DIR/group" 2>/dev/null || : > "$RESCUE_DIR/group"
+    printf 'root:x:0:\n' >> "$RESCUE_DIR/group"
+    chmod 644 "$RESCUE_DIR/passwd" "$RESCUE_DIR/group"
 }
 
 ensure_host_keys()
@@ -106,22 +100,44 @@ dropbear_supports()
     "$DROPBEAR_BIN" -h 2>&1 | grep -q -- "$1"
 }
 
+dropbear_running()
+{
+    [ -s "$DROPBEAR_PID" ] || return 1
+    pid="$(cat "$DROPBEAR_PID" 2>/dev/null || true)"
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$pid" 2>/dev/null || return 1
+
+    # The pid file persists across stock boots. A newly booted Android can
+    # reuse that number for an unrelated process, so kill -0 alone is unsafe.
+    [ "$(cat "/proc/$pid/comm" 2>/dev/null || true)" = dropbear ]
+}
+
 start_dropbear()
 {
     [ -x "$DROPBEAR_BIN" ] || {
         log "missing dropbear at $DROPBEAR_BIN"
         return 1
     }
+    [ -x "$DROPBEAR_NS_BIN" ] || {
+        log "missing dropbear namespace launcher at $DROPBEAR_NS_BIN"
+        return 1
+    }
 
-    if [ -s "$DROPBEAR_PID" ] && kill -0 "$(cat "$DROPBEAR_PID")" 2>/dev/null; then
+    if dropbear_running; then
         log "dropbear already running pid=$(cat "$DROPBEAR_PID")"
         return 0
+    fi
+
+    if [ -s "$DROPBEAR_PID" ]; then
+        log "removing stale dropbear pid=$(cat "$DROPBEAR_PID" 2>/dev/null || true)"
+        rm -f "$DROPBEAR_PID"
     fi
 
     install_authorized_keys || true
     ensure_host_keys
 
-    opts="-E -F -m -T 3 -p $DROPBEAR_LISTEN -P $DROPBEAR_PID"
+    opts="-F -m -T 3 -p $DROPBEAR_LISTEN -P $DROPBEAR_PID"
+    dropbear_supports "^-E" && opts="-E $opts"
     [ -n "$DROPBEAR_EXTRA_LISTEN" ] && opts="$opts -p $DROPBEAR_EXTRA_LISTEN"
     [ -s "$DROPBEAR_ED25519_KEY" ] && opts="$opts -r $DROPBEAR_ED25519_KEY"
     [ -s "$DROPBEAR_RSA_KEY" ] && opts="$opts -r $DROPBEAR_RSA_KEY"
@@ -130,7 +146,26 @@ start_dropbear()
 
     log "starting dropbear listen=$DROPBEAR_LISTEN extra=${DROPBEAR_EXTRA_LISTEN:-none}"
     # shellcheck disable=SC2086
-    "$DROPBEAR_BIN" $opts >> "$LOG_FILE" 2>&1 &
+    "$DROPBEAR_NS_BIN" "$RESCUE_DIR" "$DROPBEAR_BIN" \
+        $opts >> "$LOG_FILE" 2>&1 &
+
+    sleep 1
+    if ! dropbear_running; then
+        log "dropbear failed to stay running"
+        return 1
+    fi
+    log "dropbear running pid=$(cat "$DROPBEAR_PID")"
+}
+
+dropbear_supervisor()
+{
+    while :; do
+        if ! dropbear_running; then
+            log "dropbear not running; restarting"
+            start_dropbear || true
+        fi
+        sleep "$DROPBEAR_RETRY_SEC"
+    done
 }
 
 reverse_ssh_ready()
@@ -164,6 +199,7 @@ run_reverse_ssh()
                 -y \
                 -K 30 \
                 -I 120 \
+                -o ExitOnForwardFailure=yes \
                 -i "$ORACLE_IDENTITY" \
                 -p "$ORACLE_PORT" \
                 -R "${ORACLE_REMOTE_BIND}:${ORACLE_REMOTE_PORT}:${DROPBEAR_LISTEN}" \
@@ -195,8 +231,10 @@ main()
     wait_boot_completed || log "boot_completed wait timed out"
     wait_network || log "network wait timed out"
     start_dropbear || true
+    dropbear_supervisor &
     reverse_ssh_loop &
     log "ready"
+    wait
 }
 
 main "$@"
