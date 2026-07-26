@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+# Single public entry point for the xaga kexec Ubuntu project.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$ROOT/scripts/lib/env.sh"
+
+die()
+{
+  printf 'xaga: %s\n' "$*" >&2
+  exit 2
+}
+
+usage()
+{
+  cat <<'EOF'
+Usage: ./xaga <command> [options]
+
+Public commands:
+  doctor
+      Check locked sources, host tools, patches and local inputs.
+
+  status
+      Show connected stock/Ubuntu devices and their current boot state.
+
+  prepare
+      Explicitly fetch locked source trees and apply reviewed patches.
+
+  build [all|kernel|kexec|aosp|rootfs] [--iso PATH] [--force]
+      Build host-side artifacts. "all" excludes rootfs unless --iso is given.
+
+  install [--serial SERIAL]
+      Pull stock boot inputs, rebuild the initrd and install the runtime/payload.
+      Add --rootfs FILE --sha256 HASH --confirm-wipe-rootfs to replace Ubuntu.
+
+  boot [--serial SERIAL] [--panic-after SECONDS]
+      Perform one guarded stock-to-Ubuntu boot.
+
+  test --unattended [--serial SERIAL] [--rounds N] [--panic-after SECONDS]
+      Run repeated boot, watchdog and log-collection rounds.
+
+  partition --plan
+  partition --apply --confirm-destroy-userdata
+      Inspect or create the xaga linux partition. Apply destroys Android userdata.
+
+  backup [--serial SERIAL] [--output-dir DIR]
+      Back up the unmounted Ubuntu filesystem from stock Android.
+
+  help
+      Show this message.
+
+Environment overrides remain available through config/env; normally only ADB
+and device serial need adjustment. Implementation scripts under scripts/ are
+internal interfaces and may change.
+EOF
+}
+
+require_no_args()
+{
+  [ "$#" -eq 0 ] || die "unexpected argument: $1"
+}
+
+cmd_doctor()
+{
+  require_no_args "$@"
+  exec bash "$ROOT/scripts/host/check_sources.sh"
+}
+
+cmd_status()
+{
+  require_no_args "$@"
+  local line serial state product bootmode pid1 system_state
+  local found=0
+  printf 'ADB command: %s\n' "$ADB"
+  printf '%-24s %-10s %-10s %-12s %-12s %s\n' \
+    SERIAL STATE PRODUCT BOOTMODE PID1 SYSTEMD
+  while read -r serial state _; do
+    [ "$state" = device ] || continue
+    found=1
+    product="$("$ADB" -s "$serial" shell 'getprop ro.product.device 2>/dev/null' |
+      tr -d '\r\n')"
+    bootmode="$("$ADB" -s "$serial" shell 'getprop ro.bootmode 2>/dev/null' |
+      tr -d '\r\n')"
+    pid1="$("$ADB" -s "$serial" shell 'cat /proc/1/comm 2>/dev/null' |
+      tr -d '\r\n')"
+    system_state="$("$ADB" -s "$serial" shell \
+      'systemctl is-system-running 2>/dev/null || true' | tr -d '\r\n')"
+    printf '%-24s %-10s %-10s %-12s %-12s %s\n' \
+      "$serial" "$state" "${product:--}" "${bootmode:--}" \
+      "${pid1:--}" "${system_state:--}"
+  done < <("$ADB" devices -l 2>/dev/null | tr -d '\r' | sed '1d')
+  [ "$found" = 1 ] || printf 'No ready ADB device found.\n'
+}
+
+cmd_prepare()
+{
+  require_no_args "$@"
+  exec bash "$ROOT/scripts/host/fetch_sources.sh" --fetch --apply-patches
+}
+
+cmd_build()
+{
+  local target=all iso= force=0
+  if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then
+    target="$1"
+    shift
+  fi
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --iso)
+        [ "$#" -ge 2 ] || die "--iso requires a path"
+        iso="$2"
+        shift 2
+        ;;
+      --force)
+        force=1
+        shift
+        ;;
+      *)
+        die "unknown build option: $1"
+        ;;
+    esac
+  done
+  case "$target" in
+    all|kernel|kexec|aosp|rootfs) ;;
+    *) die "build target must be all, kernel, kexec, aosp or rootfs" ;;
+  esac
+
+  bash "$ROOT/scripts/host/check_sources.sh"
+  case "$target" in
+    all|kexec)
+      bash "$ROOT/scripts/host/build_kexec_tools.sh"
+      ;;
+  esac
+  case "$target" in
+    all|aosp)
+      bash "$ROOT/scripts/host/build_aosp_prebuilts.sh"
+      ;;
+  esac
+  case "$target" in
+    all|kernel)
+      bash "$ROOT/scripts/host/build_gki_logged.sh"
+      ;;
+  esac
+  if [ "$target" = rootfs ] || { [ "$target" = all ] && [ -n "$iso" ]; }; then
+    local -a args=(--build)
+    [ "$force" = 0 ] || args+=(--force)
+    if [ -n "$iso" ]; then
+      UBUNTU_ISO="$iso" bash "$ROOT/scripts/host/build_ubuntu_rootfs.sh" "${args[@]}"
+    else
+      bash "$ROOT/scripts/host/build_ubuntu_rootfs.sh" "${args[@]}"
+    fi
+  elif [ "$force" = 1 ] || [ -n "$iso" ]; then
+    die "--iso/--force only apply when building rootfs"
+  fi
+}
+
+cmd_install()
+{
+  local serial= rootfs= sha256= confirm=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --serial)
+        [ "$#" -ge 2 ] || die "--serial requires a value"
+        serial="$2"
+        shift 2
+        ;;
+      --rootfs)
+        [ "$#" -ge 2 ] || die "--rootfs requires a path"
+        rootfs="$2"
+        shift 2
+        ;;
+      --sha256)
+        [ "$#" -ge 2 ] || die "--sha256 requires a value"
+        sha256="$2"
+        shift 2
+        ;;
+      --confirm-wipe-rootfs)
+        confirm=1
+        shift
+        ;;
+      *)
+        die "unknown install option: $1"
+        ;;
+    esac
+  done
+  if [ -n "$rootfs" ]; then
+    [ -n "$sha256" ] || die "--rootfs requires --sha256"
+    [ "$confirm" = 1 ] || die "--rootfs requires --confirm-wipe-rootfs"
+  elif [ -n "$sha256" ] || [ "$confirm" = 1 ]; then
+    die "--sha256/--confirm-wipe-rootfs require --rootfs"
+  fi
+
+  if [ -n "$rootfs" ]; then
+    STOCK_SERIAL="$serial" ROOTFS_TAR="$rootfs" ROOTFS_SHA256="$sha256" \
+      bash "$ROOT/scripts/host/reproduce_from_stock.sh" \
+        --wipe-rootfs --confirm-wipe-rootfs
+  fi
+  STOCK_SERIAL="$serial" bash "$ROOT/scripts/host/reproduce_from_stock.sh" --install
+}
+
+parse_boot_options()
+{
+  BOOT_SERIAL=
+  BOOT_ROUNDS=1
+  BOOT_PANIC_AFTER=600
+  BOOT_INITRD=
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --serial)
+        [ "$#" -ge 2 ] || die "--serial requires a value"
+        BOOT_SERIAL="$2"
+        shift 2
+        ;;
+      --rounds)
+        [ "$#" -ge 2 ] || die "--rounds requires a value"
+        BOOT_ROUNDS="$2"
+        shift 2
+        ;;
+      --panic-after)
+        [ "$#" -ge 2 ] || die "--panic-after requires a value"
+        BOOT_PANIC_AFTER="$2"
+        shift 2
+        ;;
+      --initrd)
+        [ "$#" -ge 2 ] || die "--initrd requires a path"
+        BOOT_INITRD="$2"
+        shift 2
+        ;;
+      *)
+        die "unknown boot option: $1"
+        ;;
+    esac
+  done
+  case "$BOOT_ROUNDS" in
+    ''|*[!0-9]*|0) die "--rounds must be a positive integer" ;;
+  esac
+  case "$BOOT_PANIC_AFTER" in
+    ''|*[!0-9]*) die "--panic-after must be a non-negative integer" ;;
+  esac
+  [ -n "$BOOT_INITRD" ] ||
+    BOOT_INITRD="$OUTPUT_DIR/combined_ramdisk_kexec_system_mbox.lz4"
+}
+
+run_boot_loop()
+{
+  STOCK_SERIAL="$BOOT_SERIAL" PANIC_AFTER="$BOOT_PANIC_AFTER" \
+    bash "$ROOT/scripts/host/kexec_adb_until_ubuntu.sh" \
+      "$BOOT_INITRD" "$BOOT_ROUNDS"
+}
+
+cmd_boot()
+{
+  parse_boot_options "$@"
+  [ "$BOOT_ROUNDS" = 1 ] || die "boot performs one round; use test --unattended"
+  run_boot_loop
+}
+
+cmd_test()
+{
+  [ "${1:-}" = --unattended ] ||
+    die "test currently requires --unattended"
+  shift
+  parse_boot_options "$@"
+  [ "$BOOT_ROUNDS" -gt 1 ] ||
+    die "unattended test requires --rounds greater than 1"
+  run_boot_loop
+}
+
+cmd_partition()
+{
+  case "${1:-}" in
+    --plan)
+      shift
+      require_no_args "$@"
+      exec bash "$ROOT/scripts/host/reproduce_from_stock.sh" --partition-plan
+      ;;
+    --apply)
+      shift
+      [ "${1:-}" = --confirm-destroy-userdata ] ||
+        die "partition --apply requires --confirm-destroy-userdata"
+      shift
+      require_no_args "$@"
+      exec bash "$ROOT/scripts/host/reproduce_from_stock.sh" \
+        --apply-partition --confirm-destroy-userdata
+      ;;
+    *)
+      die "partition requires --plan or --apply"
+      ;;
+  esac
+}
+
+cmd_backup()
+{
+  exec bash "$ROOT/scripts/internal/backup_ubuntu.sh" "$@"
+}
+
+command_name="${1:-help}"
+[ "$#" -eq 0 ] || shift
+case "$command_name" in
+  doctor) cmd_doctor "$@" ;;
+  status) cmd_status "$@" ;;
+  prepare) cmd_prepare "$@" ;;
+  build) cmd_build "$@" ;;
+  install) cmd_install "$@" ;;
+  boot) cmd_boot "$@" ;;
+  test) cmd_test "$@" ;;
+  partition) cmd_partition "$@" ;;
+  backup) cmd_backup "$@" ;;
+  help|-h|--help) usage ;;
+  *) die "unknown command '$command_name'; run ./xaga help" ;;
+esac
