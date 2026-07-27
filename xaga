@@ -33,11 +33,15 @@ Public commands:
       Pull stock boot inputs, rebuild the initrd and install the runtime/payload.
       Add --rootfs FILE --sha256 HASH --confirm-wipe-rootfs to replace Ubuntu.
 
-  boot [--serial SERIAL] [--panic-after SECONDS]
-      Perform one guarded stock-to-Ubuntu boot.
+  boot [dev|prod] [--serial SERIAL] [--panic-after SECONDS]
+      Perform one stock-to-Ubuntu boot. Profile defaults to dev.
+      dev keeps unconditional watchdog feeding; prod enables health-gated reset.
+      Panic timer defaults to disabled (0).
 
-  test --unattended [--serial SERIAL] [--rounds N] [--panic-after SECONDS]
+  test --unattended [dev|prod] [--serial SERIAL] [--rounds N]
+      [--panic-after SECONDS]
       Run repeated boot, watchdog and log-collection rounds.
+      Pass a non-zero --panic-after explicitly when a timed reset is wanted.
 
   partition --plan
   partition --apply --confirm-destroy-userdata
@@ -203,10 +207,18 @@ parse_boot_options()
 {
   BOOT_SERIAL=
   BOOT_ROUNDS=1
-  BOOT_PANIC_AFTER=600
+  BOOT_PANIC_AFTER=0
   BOOT_INITRD=
+  BOOT_PROFILE=dev
+  profile_seen=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
+      dev|prod)
+        [ "$profile_seen" = 0 ] || die "watchdog profile specified more than once"
+        BOOT_PROFILE="$1"
+        profile_seen=1
+        shift
+        ;;
       --serial)
         [ "$#" -ge 2 ] || die "--serial requires a value"
         BOOT_SERIAL="$2"
@@ -245,6 +257,7 @@ parse_boot_options()
 run_boot_loop()
 {
   STOCK_SERIAL="$BOOT_SERIAL" PANIC_AFTER="$BOOT_PANIC_AFTER" \
+    WATCHDOG_PROFILE="$BOOT_PROFILE" \
     bash "$ROOT/scripts/host/kexec_adb_until_ubuntu.sh" \
       "$BOOT_INITRD" "$BOOT_ROUNDS"
 }

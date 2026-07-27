@@ -118,6 +118,8 @@ KernelSU service.d
   -> start Dropbear on 127.0.0.1:22
   -> optionally reverse SSH to usjgw 127.0.0.1:22023
   -> keep /data/local/tmp/stock-rescue.log
+operator
+  -> invoke /data/local/tmp/xaga/reboot-to-ubuntu.sh for manual recovery
 ```
 
 Install the stock rescue files while stock ADB is available:
@@ -145,8 +147,9 @@ If the reverse tunnel is up, connect from `usjgw` with:
 ssh -p 22023 root@127.0.0.1
 ```
 
-The helper `/data/local/tmp/stock-rescue/reboot-to-ubuntu.sh` is the single
-stock-side launcher. It prepares the Ubuntu target, verifies and pins
+The helper `/data/local/tmp/xaga/reboot-to-ubuntu.sh` is the single stock-side
+launcher shared by host-driven boot/tests and manual stock rescue. It prepares
+the Ubuntu target, verifies and pins
 `mm_infra`, derives a complete cmdline from stock cmdline/bootconfig, loads the
 staged payload, and jumps into Ubuntu.
 
@@ -527,6 +530,13 @@ in the default unconditional feed mode:
 ```sh
 WATCHDOG_MODE=dev
 WATCHDOG_DRY_RUN=1
+```
+
+The public boot profiles write these settings before each handoff:
+
+```text
+./xaga boot dev   -> WATCHDOG_MODE=dev,        WATCHDOG_DRY_RUN=1
+./xaga boot prod  -> WATCHDOG_MODE=unattended, WATCHDOG_DRY_RUN=0
 ```
 
 For unattended burn-in, switch to gated dry-run first. This keeps kicking the

@@ -186,13 +186,18 @@ When Ubuntu already exists and only the project runtime needs refreshing:
 
 ## 6. Boot and verify
 
-Run one guarded boot:
+Run one normal boot:
 
 ```bash
 ./xaga boot \
-  --serial <stock-adb-serial> \
-  --panic-after 600
+  --serial <stock-adb-serial>
 ```
+
+The default profile is `dev`. Use `./xaga boot prod` only after unattended
+watchdog validation; it selects health-gated recovery with real hardware reset.
+
+The panic timer defaults to disabled. For a timed test reset, pass a non-zero
+`--panic-after SECONDS` explicitly.
 
 Verify the Ubuntu USB ADB target:
 

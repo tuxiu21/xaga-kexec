@@ -9,7 +9,8 @@ INITRD_DEV="$(basename "$INITRD")"
 DTB_DEV="${DTB_DEV:-patched.dtb}"
 MAX="${2:-8}"
 UBUNTU_SERIAL="${UBUNTU_SERIAL:-ubuntu012345678}"
-PANIC_AFTER="${PANIC_AFTER:-900}"
+PANIC_AFTER="${PANIC_AFTER:-0}"
+WATCHDOG_PROFILE="${WATCHDOG_PROFILE:-dev}"
 KEXEC_EXTRA_CMDLINE="${KEXEC_EXTRA_CMDLINE:-}"
 UBUNTU_WIFI="${UBUNTU_WIFI:-1}"
 UBUNTU_WIFI_SKIP_MODULES="${UBUNTU_WIFI_SKIP_MODULES:-}"
@@ -25,6 +26,8 @@ LINUX_MOUNT="${LINUX_MOUNT:-/mnt/linux_kexec}"
 RUNTIME_DIR="${RUNTIME_DIR:-$LINUX_MOUNT/usr/local/libexec/kexec}"
 REMOTE_LOG_DIR="${REMOTE_LOG_DIR:-$LINUX_MOUNT/var/log/kexec-runtime}"
 REMOTE_STATE_DIR="${REMOTE_STATE_DIR:-$LINUX_MOUNT/var/lib/kexec-runtime}"
+XAGA_DIR="${XAGA_DIR:-/data/local/tmp/xaga}"
+REBOOT_TO_UBUNTU="${REBOOT_TO_UBUNTU:-$XAGA_DIR/reboot-to-ubuntu.sh}"
 OUT="$LOG_ROOT/kexec_adb_until_ubuntu_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$OUT"
 
@@ -192,7 +195,12 @@ print_ubuntu_logs() {
 if [ -z "$STOCK_SERIAL" ]; then
     STOCK_SERIAL="$(detect_stock_serial)"
 fi
-say "initrd=$INITRD dtb=${DTB_DEV:-<live>} max=$MAX ubuntu=$UBUNTU_SERIAL stock=$STOCK_SERIAL panic=${PANIC_AFTER}s kexec_extra_cmdline=${KEXEC_EXTRA_CMDLINE:-<none>} wifi=${UBUNTU_WIFI} wifi_skip=${UBUNTU_WIFI_SKIP_MODULES:-<none>} wait_wifi_ready=${UBUNTU_WIFI_WAIT_READY} wifi_wait=${UBUNTU_WIFI_WAIT}s out=$OUT"
+case "$WATCHDOG_PROFILE" in
+    dev|prod) ;;
+    *) say "invalid watchdog profile: $WATCHDOG_PROFILE"; exit 2 ;;
+esac
+
+say "initrd=$INITRD dtb=${DTB_DEV:-<live>} max=$MAX ubuntu=$UBUNTU_SERIAL stock=$STOCK_SERIAL panic=${PANIC_AFTER}s watchdog_profile=$WATCHDOG_PROFILE kexec_extra_cmdline=${KEXEC_EXTRA_CMDLINE:-<none>} wifi=${UBUNTU_WIFI} wifi_skip=${UBUNTU_WIFI_SKIP_MODULES:-<none>} wait_wifi_ready=${UBUNTU_WIFI_WAIT_READY} wifi_wait=${UBUNTU_WIFI_WAIT}s out=$OUT"
 
 if ubuntu_up; then
     say "already on Ubuntu ADB; probing current root"
@@ -215,9 +223,10 @@ for r in $(seq 1 "$MAX"); do
 
     nonce="UBUNTU-r${r}-$(date +%s)-${RANDOM}"
     say "round $r: install and invoke the stock direct-root launcher (nonce=$nonce)"
+    "$ADB" shell "mkdir -p $XAGA_DIR"
     "$ADB" push "$ROOT/scripts/stock/reboot-to-ubuntu.sh" \
-        /data/local/tmp/reboot-to-ubuntu.sh >/dev/null
-    timeout "$KEXEC_TRIGGER_TIMEOUT" "$ADB" shell "su -c 'chmod 0755 /data/local/tmp/reboot-to-ubuntu.sh; echo $nonce > /dev/kmsg; INITRD=/data/local/tmp/$INITRD_DEV DTB=/data/local/tmp/$DTB_DEV PANIC_AFTER=$PANIC_AFTER UBUNTU_WIFI=$UBUNTU_WIFI UBUNTU_WIFI_SKIP_MODULES=\"$UBUNTU_WIFI_SKIP_MODULES\" KEXEC_EXTRA_CMDLINE=\"$KEXEC_EXTRA_CMDLINE\" /data/local/tmp/reboot-to-ubuntu.sh'" > "$OUT/round_${r}_kexec_trigger.log" 2>&1
+        "$REBOOT_TO_UBUNTU" >/dev/null
+    timeout "$KEXEC_TRIGGER_TIMEOUT" "$ADB" shell "su -c 'chmod 0755 $REBOOT_TO_UBUNTU; echo $nonce > /dev/kmsg; INITRD=/data/local/tmp/$INITRD_DEV DTB=/data/local/tmp/$DTB_DEV PANIC_AFTER=$PANIC_AFTER WATCHDOG_PROFILE=$WATCHDOG_PROFILE UBUNTU_WIFI=$UBUNTU_WIFI UBUNTU_WIFI_SKIP_MODULES=\"$UBUNTU_WIFI_SKIP_MODULES\" KEXEC_EXTRA_CMDLINE=\"$KEXEC_EXTRA_CMDLINE\" $REBOOT_TO_UBUNTU'" > "$OUT/round_${r}_kexec_trigger.log" 2>&1
     kexec_trigger_rc=$?
     say "round $r: kexec trigger adb command returned rc=$kexec_trigger_rc"
 

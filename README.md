@@ -48,11 +48,21 @@ Replacing the installed Ubuntu remains deliberately explicit:
 
 ## Device operations
 
-Run one guarded boot:
+Run one normal boot:
 
 ```bash
-./xaga boot --serial <stock-adb-serial> --panic-after 600
+./xaga boot --serial <stock-adb-serial>
 ```
+
+The default `dev` profile keeps unconditional watchdog feeding. Select the
+health-gated production profile explicitly:
+
+```bash
+./xaga boot prod --serial <stock-adb-serial>
+```
+
+The panic timer is disabled by default. Pass `--panic-after SECONDS`
+explicitly when a timed safety reset is wanted.
 
 Run repeated unattended tests:
 

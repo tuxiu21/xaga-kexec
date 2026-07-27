@@ -12,6 +12,8 @@ LINUX_DEV="${LINUX_DEV:-/dev/block/by-name/linux}"
 LINUX_DEV_FALLBACK="${LINUX_DEV_FALLBACK:-/dev/block/sdc88}"
 LINUX_MOUNT="${LINUX_MOUNT:-/mnt/linux_kexec}"
 PREPARE="${PREPARE:-$LINUX_MOUNT/usr/local/libexec/kexec/prepare_ubuntu_kexec_boot.sh}"
+WATCHDOG_PROFILE="${WATCHDOG_PROFILE:-dev}"
+WATCHDOG_CONFIG="${WATCHDOG_CONFIG:-$LINUX_MOUNT/etc/xaga-watchdog.conf}"
 CMDLINE="${CMDLINE:-}"
 KEXEC_EXTRA_CMDLINE="${KEXEC_EXTRA_CMDLINE:-}"
 
@@ -29,9 +31,41 @@ mount_linux_root()
         mount -t ext4 -o rw,noatime "$LINUX_DEV_FALLBACK" "$LINUX_MOUNT"
 }
 
+apply_watchdog_profile()
+{
+    case "$WATCHDOG_PROFILE" in
+        dev)
+            watchdog_mode=dev
+            watchdog_dry_run=1
+            ;;
+        prod)
+            watchdog_mode=unattended
+            watchdog_dry_run=0
+            ;;
+        *)
+            die "invalid watchdog profile: $WATCHDOG_PROFILE"
+            ;;
+    esac
+
+    mkdir -p "$(dirname "$WATCHDOG_CONFIG")"
+    touch "$WATCHDOG_CONFIG"
+    if grep -q '^WATCHDOG_MODE=' "$WATCHDOG_CONFIG"; then
+        sed -i "s/^WATCHDOG_MODE=.*/WATCHDOG_MODE=$watchdog_mode/" "$WATCHDOG_CONFIG"
+    else
+        printf 'WATCHDOG_MODE=%s\n' "$watchdog_mode" >> "$WATCHDOG_CONFIG"
+    fi
+    if grep -q '^WATCHDOG_DRY_RUN=' "$WATCHDOG_CONFIG"; then
+        sed -i "s/^WATCHDOG_DRY_RUN=.*/WATCHDOG_DRY_RUN=$watchdog_dry_run/" "$WATCHDOG_CONFIG"
+    else
+        printf 'WATCHDOG_DRY_RUN=%s\n' "$watchdog_dry_run" >> "$WATCHDOG_CONFIG"
+    fi
+    echo "watchdog profile=$WATCHDOG_PROFILE mode=$watchdog_mode dry_run=$watchdog_dry_run"
+}
+
 prepare_ubuntu()
 {
     mount_linux_root || die "cannot mount linux root"
+    apply_watchdog_profile
     [ -x "$PREPARE" ] || die "missing prepare helper: $PREPARE"
     PANIC_AFTER="${PANIC_AFTER:-0}" \
     UBUNTU_WIFI="${UBUNTU_WIFI:-1}" \
