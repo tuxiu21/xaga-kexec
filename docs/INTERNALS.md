@@ -147,6 +147,48 @@ If the reverse tunnel is up, connect from `usjgw` with:
 ssh -p 22023 root@127.0.0.1
 ```
 
+Ubuntu uses a separate systemd-managed reverse tunnel so a stale stock
+connection cannot reserve Ubuntu's port:
+
+```text
+stock:  VPS 127.0.0.1:22023 -> stock Dropbear 127.0.0.1:22
+Ubuntu: VPS 127.0.0.1:22024 -> Ubuntu sshd 127.0.0.1:22
+```
+
+`kexec-reverse-ssh.service` is installed and enabled with the Ubuntu runtime,
+but its conditions keep it inactive until these root-owned files exist:
+
+```text
+/etc/xaga-reverse-ssh.conf
+/etc/xaga-reverse-ssh/id_ed25519
+/etc/xaga-reverse-ssh/known_hosts
+```
+
+Use `/etc/xaga-reverse-ssh.conf.sample` as the non-secret configuration
+template. The service uses the system OpenSSH client, strict host-key checking,
+`ExitOnForwardFailure=yes`, 30-second keepalives, and a 10-second systemd
+restart delay. From `usjgw`, connect to a live Ubuntu tunnel with:
+
+```bash
+ssh -p 22024 root@127.0.0.1
+```
+
+The VPS sshd should use a non-zero `ClientAliveInterval` so an abrupt kexec
+does not leave the old remote-forward listener reserved indefinitely. Keep
+both reverse-forward listeners bound to VPS loopback only.
+
+The deployed `usjgw` convention uses a dedicated ingress key:
+
+```bash
+ssh -i ~/.ssh/xaga_ubuntu_ed25519 \
+  -p 22024 root@127.0.0.1
+```
+
+The corresponding public key in Ubuntu root's `authorized_keys` should be
+restricted to `from="127.0.0.1"` because sshd sees reverse-forward connections
+as local. The Ubuntu outbound key on the VPS should be limited to port
+forwarding and `permitlisten="127.0.0.1:22024"`.
+
 The helper `/data/local/tmp/xaga/reboot-to-ubuntu.sh` is the single stock-side
 launcher shared by host-driven boot/tests and manual stock rescue. It prepares
 the Ubuntu target, verifies and pins
@@ -523,6 +565,13 @@ curl -I -x http://127.0.0.1:7890 https://www.google.com
 docker info
 ```
 
+The runtime installs
+`mihomo.service.d/30-kexec-network-ready.conf` to prevent TUN initialization
+before Wi-Fi is usable. The drop-in replaces the package's fixed one-second
+delay with a bounded wait for both a global IPv4 address on `wlan0` and a
+default route. Its extended start timeout covers the kexec Wi-Fi bring-up
+window, and systemd retries after ten seconds if the network is still absent.
+
 Watchdog mode is controlled by `/etc/xaga-watchdog.conf` in the Ubuntu rootfs.
 Both modes use the installed shell watchdog helper. Keep development sessions
 in the default unconditional feed mode:
@@ -551,6 +600,10 @@ systemctl restart kexec-watchdog.service
 cat /run/kexec-runtime/watchdog-health
 journalctl -u kexec-watchdog.service -b --no-pager
 ```
+
+The shipped configuration uses Baidu plus Xiaomi and Huawei connectivity-check
+endpoints. URL health passes when any configured endpoint is reachable, which
+avoids resetting the phone for one provider's isolated outage.
 
 Only after a clean 24-48 hour dry-run should `WATCHDOG_DRY_RUN=0` be used. In
 that mode, repeated health-check failures make the watchdog service hold

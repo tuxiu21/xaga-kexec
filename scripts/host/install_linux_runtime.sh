@@ -75,6 +75,7 @@ cp "$OUTPUT_DIR/boot_ubuntu_rootfs" "$tmp/push/boot_ubuntu_rootfs"
 cp "$ROOT/scripts/device/prepare_ubuntu_kexec_boot.sh" "$tmp/push/prepare_ubuntu_kexec_boot.sh"
 cp "$ROOT/scripts/device/wifi_bringup.sh" "$tmp/push/wifi_bringup.sh"
 cp "$ROOT/scripts/device/xaga-watchdog.conf" "$tmp/push/xaga-watchdog.conf"
+cp "$ROOT/scripts/device/xaga-reverse-ssh.conf.sample" "$tmp/push/xaga-reverse-ssh.conf.sample"
 cp "$ROOT/scripts/device/map_super_partitions.py" "$tmp/push/map_super_partitions.py"
 cp -R "$ROOT/scripts/device/bin/." "$tmp/push/bin/"
 cp -R "$ROOT/scripts/device/lib/." "$tmp/push/lib/"
@@ -84,6 +85,7 @@ chmod 0755 "$tmp/push"/adbd "$tmp/push"/boot_ubuntu_rootfs \
   "$tmp/push"/*.sh "$tmp/push"/map_super_partitions.py "$tmp/push/linker64" \
   "$tmp/push"/bin/kexec-*
 chmod 0644 "$tmp/push"/lib/kexec/*.sh "$tmp/push"/adblib/*.so
+chmod 0644 "$tmp/push/xaga-reverse-ssh.conf.sample"
 
 wifi_modules="mtk-mbox mtk_rpmsg_mbox mtk_tinysys_ipi mtk-ssc connadp mcupm gpueb fhctl mtk-afe-external scp connscp mtk_low_battery_throttling mtk_dynamic_loading_throttling mtk_mdpm mtk_pbm ccci_util_lib ccci_auxadc rps_perf ccmni ccci_md_all conninfra connfem wmt_chrdev_wifi_connac2 mddp wlan_drv_gen4m_6895"
 
@@ -122,10 +124,13 @@ adb_root_shell "
   cp '$RUNTIME_DIR/systemd/'*.link '$LINUX_MOUNT/etc/systemd/network/' 2>/dev/null || true
   [ -e '$LINUX_MOUNT/etc/xaga-watchdog.conf' ] ||
     cp '$RUNTIME_DIR/xaga-watchdog.conf' '$LINUX_MOUNT/etc/xaga-watchdog.conf'
+  cp '$RUNTIME_DIR/xaga-reverse-ssh.conf.sample' \
+    '$LINUX_MOUNT/etc/xaga-reverse-ssh.conf.sample'
 
   chmod 0644 '$LINUX_MOUNT/etc/systemd/system'/kexec-*.service \
     '$LINUX_MOUNT/etc/systemd/system'/kexec-*.target \
-    '$LINUX_MOUNT/etc/xaga-watchdog.conf' 2>/dev/null || true
+    '$LINUX_MOUNT/etc/xaga-watchdog.conf' \
+    '$LINUX_MOUNT/etc/xaga-reverse-ssh.conf.sample' 2>/dev/null || true
   chmod 0644 '$LINUX_MOUNT/etc/systemd/system'/*.service.d/*.conf \
     '$LINUX_MOUNT/etc/systemd/network'/*.network \
     '$LINUX_MOUNT/etc/systemd/network'/*.link 2>/dev/null || true
@@ -138,7 +143,7 @@ adb_root_shell "
   for unit in \
     kexec-time-keeper.service kexec-watchdog.service kexec-panic-timer.service \
     kexec-vendor-mount.service kexec-adbd.service kexec-wifi.service \
-    kexec-wpa-supplicant.service; do
+    kexec-wpa-supplicant.service kexec-reverse-ssh.service; do
     ln -sfn '../'\$unit '$LINUX_MOUNT/etc/systemd/system/multi-user.target.wants/'\$unit
   done
   ln -sfn /lib/systemd/system/systemd-networkd.service \

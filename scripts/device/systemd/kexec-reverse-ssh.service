@@ -1,0 +1,19 @@
+[Unit]
+Description=Kexec Ubuntu reverse SSH rescue tunnel
+After=network-online.target ssh.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+ConditionPathExists=/etc/xaga-reverse-ssh.conf
+ConditionPathExists=/etc/xaga-reverse-ssh/id_ed25519
+ConditionPathExists=/etc/xaga-reverse-ssh/known_hosts
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/kexec/bin/kexec-reverse-ssh
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

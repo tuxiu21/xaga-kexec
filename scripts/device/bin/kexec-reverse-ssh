@@ -1,0 +1,64 @@
+#!/bin/bash
+set -euo pipefail
+
+CONFIG="${XAGA_REVERSE_SSH_CONFIG:-/etc/xaga-reverse-ssh.conf}"
+
+[ -r "$CONFIG" ] || {
+    echo "kexec-reverse-ssh: missing readable config: $CONFIG" >&2
+    exit 1
+}
+
+# The file contains only root-owned shell assignments.
+# shellcheck disable=SC1090
+. "$CONFIG"
+
+REMOTE_HOST="${REMOTE_HOST:-}"
+REMOTE_USER="${REMOTE_USER:-}"
+REMOTE_SSH_PORT="${REMOTE_SSH_PORT:-22}"
+REMOTE_BIND="${REMOTE_BIND:-127.0.0.1}"
+REMOTE_FORWARD_PORT="${REMOTE_FORWARD_PORT:-22024}"
+LOCAL_HOST="${LOCAL_HOST:-127.0.0.1}"
+LOCAL_PORT="${LOCAL_PORT:-22}"
+IDENTITY_FILE="${IDENTITY_FILE:-/etc/xaga-reverse-ssh/id_ed25519}"
+KNOWN_HOSTS_FILE="${KNOWN_HOSTS_FILE:-/etc/xaga-reverse-ssh/known_hosts}"
+
+die()
+{
+    echo "kexec-reverse-ssh: $*" >&2
+    exit 1
+}
+
+valid_port()
+{
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+[ -n "$REMOTE_HOST" ] || die "REMOTE_HOST is required"
+[ -n "$REMOTE_USER" ] || die "REMOTE_USER is required"
+valid_port "$REMOTE_SSH_PORT" || die "invalid REMOTE_SSH_PORT: $REMOTE_SSH_PORT"
+valid_port "$REMOTE_FORWARD_PORT" || die "invalid REMOTE_FORWARD_PORT: $REMOTE_FORWARD_PORT"
+valid_port "$LOCAL_PORT" || die "invalid LOCAL_PORT: $LOCAL_PORT"
+[ -r "$IDENTITY_FILE" ] || die "missing identity: $IDENTITY_FILE"
+[ -r "$KNOWN_HOSTS_FILE" ] || die "missing known_hosts: $KNOWN_HOSTS_FILE"
+
+echo "kexec-reverse-ssh: ${REMOTE_BIND}:${REMOTE_FORWARD_PORT} -> ${LOCAL_HOST}:${LOCAL_PORT} via ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_SSH_PORT}"
+
+exec /usr/bin/ssh \
+    -F /dev/null \
+    -N \
+    -T \
+    -o BatchMode=yes \
+    -o ConnectTimeout=15 \
+    -o ExitOnForwardFailure=yes \
+    -o IdentitiesOnly=yes \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3 \
+    -o StrictHostKeyChecking=yes \
+    -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE" \
+    -i "$IDENTITY_FILE" \
+    -p "$REMOTE_SSH_PORT" \
+    -R "${REMOTE_BIND}:${REMOTE_FORWARD_PORT}:${LOCAL_HOST}:${LOCAL_PORT}" \
+    "${REMOTE_USER}@${REMOTE_HOST}"

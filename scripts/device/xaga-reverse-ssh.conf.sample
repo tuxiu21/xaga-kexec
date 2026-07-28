@@ -1,0 +1,10 @@
+# Ubuntu-only reverse SSH tunnel. Keep stock rescue on port 22023.
+REMOTE_HOST=129.146.190.204
+REMOTE_USER=ubuntu
+REMOTE_SSH_PORT=22
+REMOTE_BIND=127.0.0.1
+REMOTE_FORWARD_PORT=22024
+LOCAL_HOST=127.0.0.1
+LOCAL_PORT=22
+IDENTITY_FILE=/etc/xaga-reverse-ssh/id_ed25519
+KNOWN_HOSTS_FILE=/etc/xaga-reverse-ssh/known_hosts
