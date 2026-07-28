@@ -39,7 +39,7 @@ command -v aarch64-linux-gnu-gcc >/dev/null 2>&1 || {
 
 if [ "$CHECK_ONLY" = 1 ]; then
   if [ -x "$SOURCE/build/sbin/kexec" ]; then
-    "$SOURCE/build/sbin/kexec" --version
+    strings "$SOURCE/build/sbin/kexec" | grep -m 1 '^kexec-tools ' || true
     file "$SOURCE/build/sbin/kexec"
   else
     echo "source ready; build output is absent: $SOURCE/build/sbin/kexec"
@@ -57,5 +57,5 @@ fi
   echo "build completed without build/sbin/kexec" >&2
   exit 1
 }
-"$SOURCE/build/sbin/kexec" --version
+strings "$SOURCE/build/sbin/kexec" | grep -m 1 '^kexec-tools ' || true
 file "$SOURCE/build/sbin/kexec"

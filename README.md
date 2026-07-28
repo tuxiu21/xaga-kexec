@@ -25,8 +25,22 @@ The normal workflow is:
 ```
 
 `doctor` is read-only. `prepare` explicitly uses the network and writes locked
-source checkouts. `build all` builds kexec-tools, the patched AOSP prebuilts and
-the GKI kernel. It does not create a rootfs unless an ISO is supplied.
+source checkouts. It creates separate `common-stock` and `common-ubuntu`
+worktrees from the maintained GitHub kernel branches. `build all` builds
+kexec-tools, the patched AOSP prebuilts and the Ubuntu-profile GKI kernel. It
+does not create a rootfs unless an ISO is supplied.
+
+The stock and Ubuntu kernels never share a mutable source checkout or output
+directory:
+
+```bash
+./xaga build kernel stock
+./xaga build kernel ubuntu
+```
+
+The stock profile preserves the Android/KernelSU configuration and rejects
+Docker-only options. The Ubuntu profile enables the kexec direct-root and
+Docker options and remains the only kernel installed as the kexec payload.
 
 Build the locked Ubuntu 26.04 minimal rootfs from a local official ISO:
 
@@ -47,6 +61,25 @@ Replacing the installed Ubuntu remains deliberately explicit:
 ```
 
 ## Device operations
+
+Create and validate a stock boot image without writing the phone:
+
+```bash
+./xaga flash stock-kernel --plan --serial <stock-adb-serial>
+```
+
+The plan pulls and backs up the active `boot_<slot>`, replaces only its kernel,
+re-unpacks the result and verifies the embedded Image hash and exact partition
+size. A permanent active-slot write is deliberately separate:
+
+```bash
+./xaga flash stock-kernel --apply \
+  --confirm-active-slot \
+  --serial <stock-adb-serial>
+```
+
+Apply requires an unlocked/orange verified-boot state, verifies the upload and
+full partition readback, and does not reboot automatically.
 
 Run one normal boot:
 

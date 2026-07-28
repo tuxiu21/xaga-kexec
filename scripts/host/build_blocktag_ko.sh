@@ -11,7 +11,7 @@ set -euo pipefail
 
 SRC="$ONEPLUS_SRC/drivers/misc/mediatek/blocktag"
 OUT="${OUT:-$BLOCKTAG_BUILD_DIR}"
-KOUT="${KOUT:-$AK/out/android12-5.10/common}"
+KOUT="${KOUT:-$KERNEL_UBUNTU_OUT}"
 CLANG_BIN="${CLANG_BIN:-$AK/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin}"
 
 for path in "$AK/common" "$KOUT" "$SRC" "$CLANG_BIN"; do

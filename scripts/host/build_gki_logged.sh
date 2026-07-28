@@ -2,6 +2,8 @@
 # Build the Android GKI kernel while keeping verbose output under work/logs/.
 #
 # Useful knobs:
+#   KERNEL_PROFILE=stock scripts/host/build_gki_logged.sh
+#   KERNEL_PROFILE=ubuntu scripts/host/build_gki_logged.sh
 #   TAIL_LINES=120 scripts/host/build_gki_logged.sh   # print last N lines at finish
 #   FOLLOW=1 scripts/host/build_gki_logged.sh         # stream the log while building
 #   KASAN_INLINE_ONLY=1 scripts/host/build_gki_logged.sh
@@ -17,42 +19,60 @@ set -u
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
-OUT="$LOG_ROOT/gki_build_$(date +%Y%m%d_%H%M%S)"
-LOG="$OUT/build.log"
-STATUS="$OUT/status.txt"
 TAIL_LINES="${TAIL_LINES:-40}"
 FOLLOW="${FOLLOW:-0}"
 KASAN_INLINE_ONLY="${KASAN_INLINE_ONLY:-0}"
 CHECK_CONFIG_ONLY="${CHECK_CONFIG_ONLY:-0}"
 REQUIRED_KERNEL_CONFIGS="${REQUIRED_KERNEL_CONFIGS:-}"
 COPY_DIST_ARTIFACTS="${COPY_DIST_ARTIFACTS:-0}"
-BUILD_CONFIG_FRAGMENTS_VALUE="${BUILD_CONFIG_FRAGMENTS:-build.config.ccache common/build.config.docker}"
+KERNEL_PROFILE="${KERNEL_PROFILE:-ubuntu}"
+case "$KERNEL_PROFILE" in
+  stock)
+    KERNEL_DIR_VALUE="common-stock"
+    DEFAULT_BUILD_CONFIG_FRAGMENTS="build.config.ccache"
+    KERNEL_OUT_DIR="$KERNEL_STOCK_OUT"
+    KERNEL_DIST_DIR="$KERNEL_STOCK_DIST"
+    PROFILE_REQUIRED_CONFIGS="CONFIG_KSU=y !CONFIG_DEVTMPFS !CONFIG_NF_TABLES"
+    ;;
+  ubuntu)
+    KERNEL_DIR_VALUE="common-ubuntu"
+    DEFAULT_BUILD_CONFIG_FRAGMENTS="build.config.ccache common-ubuntu/build.config.docker"
+    KERNEL_OUT_DIR="$KERNEL_UBUNTU_OUT"
+    KERNEL_DIST_DIR="$KERNEL_UBUNTU_DIST"
+    PROFILE_REQUIRED_CONFIGS="!CONFIG_KSU CONFIG_DEVTMPFS=y CONFIG_NF_TABLES=y"
+    ;;
+  *)
+    echo "invalid KERNEL_PROFILE: $KERNEL_PROFILE (expected stock or ubuntu)" >&2
+    exit 2
+    ;;
+esac
+OUT="$LOG_ROOT/gki_${KERNEL_PROFILE}_build_$(date +%Y%m%d_%H%M%S)"
+LOG="$OUT/build.log"
+STATUS="$OUT/status.txt"
+BUILD_CONFIG_VALUE="$KERNEL_DIR_VALUE/build.config.gki.aarch64"
+BUILD_CONFIG_FRAGMENTS_VALUE="${BUILD_CONFIG_FRAGMENTS:-$DEFAULT_BUILD_CONFIG_FRAGMENTS}"
 USER_GKI_DEFCONFIG_FRAGMENT="${GKI_DEFCONFIG_FRAGMENT:-}"
 GKI_DEFCONFIG_FRAGMENT_VALUE="$USER_GKI_DEFCONFIG_FRAGMENT"
-KERNEL_OUT_DIR="$AK/out/android12-5.10/common"
-KERNEL_DIST_DIR="$AK/out/android12-5.10/dist"
 
 mkdir -p "$OUT"
 
 if [ "$KASAN_INLINE_ONLY" = "1" ]; then
   if [ -n "$USER_GKI_DEFCONFIG_FRAGMENT" ]; then
     GKI_DEFCONFIG_FRAGMENT_VALUE="$OUT/gki_defconfig_fragment.kasan_inline_only"
-    cat > "$GKI_DEFCONFIG_FRAGMENT_VALUE" <<EOF
+cat > "$GKI_DEFCONFIG_FRAGMENT_VALUE" <<EOF
 source "$USER_GKI_DEFCONFIG_FRAGMENT"
-source common/build.config.kasan_inline_only
+source $KERNEL_DIR_VALUE/build.config.kasan_inline_only
 EOF
   else
-    GKI_DEFCONFIG_FRAGMENT_VALUE="common/build.config.kasan_inline_only"
+    GKI_DEFCONFIG_FRAGMENT_VALUE="$KERNEL_DIR_VALUE/build.config.kasan_inline_only"
   fi
 fi
 if [ "$CHECK_CONFIG_ONLY" = "1" ]; then
-  BUILD_CONFIG_FRAGMENTS_VALUE="$BUILD_CONFIG_FRAGMENTS_VALUE common/build.config.config_only"
+  BUILD_CONFIG_FRAGMENTS_VALUE="$BUILD_CONFIG_FRAGMENTS_VALUE $KERNEL_DIR_VALUE/build.config.config_only"
   KERNEL_OUT_DIR="$OUT/config-out"
   KERNEL_DIST_DIR="$OUT/config-dist"
-  KERNEL_CONFIG_PATH="$KERNEL_OUT_DIR/common/.config"
-else
-  KERNEL_CONFIG_PATH="$KERNEL_OUT_DIR/common/.config"
 fi
+KERNEL_CONFIG_PATH="$KERNEL_OUT_DIR/$KERNEL_DIR_VALUE/.config"
 
 say() {
   printf '%s %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$STATUS"
@@ -147,8 +167,14 @@ if [ ! -d "$AK" ]; then
   say "android-kernel tree not found: $AK"
   exit 2
 fi
+if [ ! -d "$AK/$KERNEL_DIR_VALUE" ]; then
+  say "missing $KERNEL_PROFILE kernel worktree: $AK/$KERNEL_DIR_VALUE"
+  say "run ./xaga prepare to create the locked profile worktrees"
+  exit 2
+fi
 
-say "kernel tree: $AK"
+say "kernel profile: $KERNEL_PROFILE"
+say "kernel tree: $AK/$KERNEL_DIR_VALUE"
 say "log: $LOG"
 say "status: $STATUS"
 
@@ -160,7 +186,8 @@ CCACHE_COMPILERCHECK=content
 CCACHE_NOHASHDIR=true
 CCACHE_PATH=$AK/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin
 LTO=thin
-BUILD_CONFIG=common/build.config.gki.aarch64
+KERNEL_PROFILE=$KERNEL_PROFILE
+BUILD_CONFIG=$BUILD_CONFIG_VALUE
 BUILD_CONFIG_FRAGMENTS=$BUILD_CONFIG_FRAGMENTS_VALUE
 OUT_DIR=$KERNEL_OUT_DIR
 DIST_DIR=$KERNEL_DIST_DIR
@@ -168,6 +195,7 @@ KASAN_INLINE_ONLY=$KASAN_INLINE_ONLY
 GKI_DEFCONFIG_FRAGMENT=$GKI_DEFCONFIG_FRAGMENT_VALUE
 CHECK_CONFIG_ONLY=$CHECK_CONFIG_ONLY
 REQUIRED_KERNEL_CONFIGS=$REQUIRED_KERNEL_CONFIGS
+PROFILE_REQUIRED_CONFIGS=$PROFILE_REQUIRED_CONFIGS
 COPY_DIST_ARTIFACTS=$COPY_DIST_ARTIFACTS
 EOF
 
@@ -181,7 +209,7 @@ say "build started"
   CCACHE_NOHASHDIR=true \
   CCACHE_PATH="$AK/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin" \
   LTO=thin \
-  BUILD_CONFIG=common/build.config.gki.aarch64 \
+  BUILD_CONFIG="$BUILD_CONFIG_VALUE" \
   BUILD_CONFIG_FRAGMENTS="$BUILD_CONFIG_FRAGMENTS_VALUE" \
   OUT_DIR="$KERNEL_OUT_DIR" \
   DIST_DIR="$KERNEL_DIST_DIR" \
@@ -221,7 +249,8 @@ if [ "${TAIL_LINES}" -gt 0 ] 2>/dev/null; then
   tail -n "$TAIL_LINES" "$LOG" | tee "$OUT/tail.txt"
 fi
 
-if [ "$rc" -eq 0 ] && { [ "$CHECK_CONFIG_ONLY" = "1" ] || [ -n "$REQUIRED_KERNEL_CONFIGS" ] || [ "$KASAN_INLINE_ONLY" = "1" ]; }; then
+if [ "$rc" -eq 0 ]; then
+  REQUIRED_KERNEL_CONFIGS="$PROFILE_REQUIRED_CONFIGS $REQUIRED_KERNEL_CONFIGS"
   check_kernel_config || rc=1
 fi
 

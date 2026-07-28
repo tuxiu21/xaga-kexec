@@ -224,8 +224,15 @@ full rebuilds:
 
 ```text
 sources/android-kernel
-    Android 12 5.10 GKI build tree. Used by build_gki_logged.sh and as the
-    Kbuild output base for external modules.
+    Android 12 5.10 GKI build/toolchain root.
+
+sources/android-kernel/common-stock
+    Locked worktree of the maintained xaga-stock GitHub branch. It preserves
+    stock Android and KernelSU configuration.
+
+sources/android-kernel/common-ubuntu
+    Locked worktree of the maintained xaga-ubuntu GitHub branch. It owns
+    Ubuntu/kexec code and Docker-facing configuration.
 
 sources/Xiaomi_Kernel_OpenSource
     Xiaomi xaga vendor kernel source. Used for patched mtk-mbox.ko.
@@ -343,18 +350,21 @@ Both initrd builders:
   both `/kxshbin` and `/first_stage_ramdisk/kxshbin`;
 - leave linux partition mounting to `/kxshbin --prepare`.
 
-Build the GKI kernel and optional replacement blocktag:
+Build the isolated GKI profiles and optional replacement blocktag:
 
 ```bash
-bash scripts/host/build_gki_logged.sh
+./xaga build kernel stock
+./xaga build kernel ubuntu
 bash scripts/host/build_blocktag_ko.sh
 bash scripts/host/build_patched_mbox_initrd.sh
 ```
 
-`build_gki_logged.sh` loads `common/build.config.docker` by default. That
+The stock profile uses `common-stock/build.config.gki.aarch64` without the
+Docker fragment and writes to `out-stock/`. The Ubuntu profile uses
+`common-ubuntu/build.config.gki.aarch64` plus
+`common-ubuntu/build.config.docker` and writes to `out-ubuntu/`. The Ubuntu
 fragment merges `arch/arm64/configs/docker_gki.fragment` and
-`arch/arm64/configs/kexec_ubuntu.fragment`, so the default GKI build includes
-the Ubuntu/kexec baseline plus Docker-facing options such as:
+`arch/arm64/configs/kexec_ubuntu.fragment`, including:
 
 ```text
 CONFIG_DEVTMPFS=y
@@ -375,8 +385,24 @@ Use config assertions when changing kernel fragments:
 ```bash
 CHECK_CONFIG_ONLY=1 \
 REQUIRED_KERNEL_CONFIGS='CONFIG_NF_TABLES=y CONFIG_NFT_NAT=y CONFIG_DEVTMPFS=y' \
-  bash scripts/host/build_gki_logged.sh
+KERNEL_PROFILE=ubuntu bash scripts/host/build_gki_logged.sh
 ```
+
+Kernel source changes are commits in the GitHub `xaga-stock` and
+`xaga-ubuntu` branches, not patches in this orchestration repository. Shared
+fixes should be committed once and merged or cherry-picked deliberately.
+Third-party AOSP sources continue to use reviewed patch files.
+
+### Stock boot packaging
+
+`./xaga flash stock-kernel --plan` pulls the full active boot partition,
+retains a timestamped backup, replaces only the kernel, repacks it with
+magiskboot, and verifies the embedded kernel hash and exact partition size.
+It never writes the device.
+
+`--apply --confirm-active-slot` additionally requires orange verified boot,
+checks the upload hash, writes the resolved active `boot_<slot>`, and checks a
+full-partition readback hash. It intentionally does not reboot.
 
 ## Install
 

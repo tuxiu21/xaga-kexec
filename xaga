@@ -26,8 +26,18 @@ Public commands:
   prepare
       Explicitly fetch locked source trees and apply reviewed patches.
 
-  build [all|kernel|kexec|aosp|rootfs] [--iso PATH] [--force]
-      Build host-side artifacts. "all" excludes rootfs unless --iso is given.
+  build kernel [stock|ubuntu]
+      Build an isolated stock or Ubuntu kernel. The default is ubuntu.
+
+  build [all|kexec|aosp|rootfs] [--iso PATH] [--force]
+      Build host-side artifacts. "all" uses the Ubuntu kernel profile and
+      excludes rootfs unless --iso is given.
+
+  flash stock-kernel --plan [--serial SERIAL]
+  flash stock-kernel --apply --confirm-active-slot [--serial SERIAL]
+      Repack the active stock boot image with the isolated stock kernel.
+      Plan only creates and verifies a host artifact. Apply writes boot_<slot>
+      but does not reboot automatically.
 
   install [--serial SERIAL]
       Pull stock boot inputs, rebuild the initrd and install the runtime/payload.
@@ -104,9 +114,13 @@ cmd_prepare()
 
 cmd_build()
 {
-  local target=all iso= force=0
+  local target=all kernel_profile=ubuntu iso= force=0
   if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then
     target="$1"
+    shift
+  fi
+  if [ "$target" = kernel ] && [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then
+    kernel_profile="$1"
     shift
   fi
   while [ "$#" -gt 0 ]; do
@@ -129,6 +143,10 @@ cmd_build()
     all|kernel|kexec|aosp|rootfs) ;;
     *) die "build target must be all, kernel, kexec, aosp or rootfs" ;;
   esac
+  case "$kernel_profile" in
+    stock|ubuntu) ;;
+    *) die "kernel profile must be stock or ubuntu" ;;
+  esac
 
   bash "$ROOT/scripts/host/check_sources.sh"
   case "$target" in
@@ -143,7 +161,7 @@ cmd_build()
   esac
   case "$target" in
     all|kernel)
-      bash "$ROOT/scripts/host/build_gki_logged.sh"
+      KERNEL_PROFILE="$kernel_profile" bash "$ROOT/scripts/host/build_gki_logged.sh"
       ;;
   esac
   if [ "$target" = rootfs ] || { [ "$target" = all ] && [ -n "$iso" ]; }; then
@@ -157,6 +175,54 @@ cmd_build()
   elif [ "$force" = 1 ] || [ -n "$iso" ]; then
     die "--iso/--force only apply when building rootfs"
   fi
+}
+
+cmd_flash()
+{
+  local target="${1:-}" mode= serial= confirm=0
+  [ -n "$target" ] || die "flash requires a target"
+  shift
+  [ "$target" = stock-kernel ] || die "flash target must be stock-kernel"
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --plan)
+        [ -z "$mode" ] || die "choose exactly one of --plan or --apply"
+        mode=plan
+        shift
+        ;;
+      --apply)
+        [ -z "$mode" ] || die "choose exactly one of --plan or --apply"
+        mode=apply
+        shift
+        ;;
+      --confirm-active-slot)
+        confirm=1
+        shift
+        ;;
+      --serial)
+        [ "$#" -ge 2 ] || die "--serial requires a value"
+        serial="$2"
+        shift 2
+        ;;
+      *)
+        die "unknown flash option: $1"
+        ;;
+    esac
+  done
+
+  [ -n "$mode" ] || die "flash stock-kernel requires --plan or --apply"
+  if [ "$mode" = apply ]; then
+    [ "$confirm" = 1 ] ||
+      die "--apply requires --confirm-active-slot"
+  elif [ "$confirm" = 1 ]; then
+    die "--confirm-active-slot is only valid with --apply"
+  fi
+
+  STOCK_BOOT_MODE="$mode" \
+  STOCK_BOOT_CONFIRM="$confirm" \
+  STOCK_SERIAL="$serial" \
+    exec bash "$ROOT/scripts/host/repack_stock_boot.sh"
 }
 
 cmd_install()
@@ -315,6 +381,7 @@ case "$command_name" in
   status) cmd_status "$@" ;;
   prepare) cmd_prepare "$@" ;;
   build) cmd_build "$@" ;;
+  flash) cmd_flash "$@" ;;
   install) cmd_install "$@" ;;
   boot) cmd_boot "$@" ;;
   test) cmd_test "$@" ;;

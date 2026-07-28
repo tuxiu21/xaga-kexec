@@ -35,6 +35,7 @@ These commands change the phone:
 ./xaga install
 ./xaga boot
 ./xaga test --unattended --rounds 10
+./xaga flash stock-kernel --apply --confirm-active-slot
 ```
 
 Partition creation destroys Android userdata and therefore requires a separate
@@ -74,9 +75,10 @@ Then require an exact clean lock match:
 STRICT=1 ./xaga doctor
 ```
 
-`config/repro.lock.tsv` pins the Android manifests/projects, Xiaomi and
-OnePlus trees, kexec-tools archive and official Ubuntu ISO checksum. Downloads
-use locked HTTPS URLs and are verified before extraction.
+`config/repro.lock.tsv` pins the Android manifests/projects, the independent
+`xaga-stock` and `xaga-ubuntu` kernel worktrees, Xiaomi and OnePlus trees,
+kexec-tools archive and official Ubuntu ISO checksum. Downloads use locked
+HTTPS URLs and are verified before extraction.
 
 ## 2. Prepare the phone partition once
 
@@ -99,8 +101,8 @@ This stage runs alone. Reboot into rooted stock Android before installation.
 
 ## 3. Build the project
 
-Build static ARM64 kexec-tools, patched AOSP first-stage init/adbd and the GKI
-kernel:
+Build static ARM64 kexec-tools, patched AOSP first-stage init/adbd and the
+Ubuntu-profile GKI kernel:
 
 ```bash
 ./xaga build all
@@ -111,12 +113,56 @@ Individual targets remain available when iterating:
 ```bash
 ./xaga build kexec
 ./xaga build aosp
-./xaga build kernel
+./xaga build kernel ubuntu
+./xaga build kernel stock
 ```
 
-Build logs and artifacts stay under the ignored `work/` directory.
+The two kernel builds use independent Git worktrees and independent outputs:
 
-## 4. Build the Ubuntu rootfs
+```text
+sources/android-kernel/common-stock
+sources/android-kernel/common-ubuntu
+sources/android-kernel/out-stock/android12-5.10/dist
+sources/android-kernel/out-ubuntu/android12-5.10/dist
+```
+
+The stock build asserts `CONFIG_KSU=y`, `CONFIG_NF_TABLES` disabled and
+`CONFIG_DEVTMPFS` disabled. The Ubuntu build asserts the opposite profile
+boundary. Build logs and other artifacts stay under ignored directories.
+
+## 4. Repack a stock debug boot image
+
+With the device running rooted stock Android, create a host-side plan:
+
+```bash
+./xaga flash stock-kernel --plan --serial <stock-adb-serial>
+```
+
+This does not write a partition. It:
+
+1. resolves the actual active slot;
+2. copies the full active boot partition into a timestamped backup;
+3. replaces only the unpacked kernel with the stock-profile Image;
+4. repacks and re-unpacks the boot image;
+5. verifies the embedded kernel hash and exact partition size.
+
+The verified image is written under `work/output/`; the original boot image
+and manifest are retained under `work/backups/stock-kernel/`.
+
+Only after reviewing the plan and ensuring an external bootloader recovery
+path is available:
+
+```bash
+./xaga flash stock-kernel --apply \
+  --confirm-active-slot \
+  --serial <stock-adb-serial>
+```
+
+Apply refuses a non-orange verified-boot state, verifies the uploaded image,
+writes only the resolved active `boot_<slot>`, verifies a full-partition
+readback hash, and deliberately leaves reboot as a separate action.
+
+## 5. Build the Ubuntu rootfs
 
 The locked input is the official Ubuntu 26.04 live-server ARM64 ISO:
 
@@ -152,7 +198,7 @@ cloud-init and netplan, but it does not claim to include configured Wi-Fi,
 OpenSSH, personal users or credentials. The project installer adds the bundled
 USB adbd and project runtime units.
 
-## 5. Install
+## 6. Install
 
 First record the rooted stock Android ADB serial:
 
@@ -184,7 +230,7 @@ When Ubuntu already exists and only the project runtime needs refreshing:
 ./xaga install --serial <stock-adb-serial>
 ```
 
-## 6. Boot and verify
+## 7. Boot and verify
 
 Run one normal boot:
 
@@ -219,7 +265,7 @@ For repeated unattended validation:
 
 Logs are collected below `work/logs/`.
 
-## 7. Back up the working Ubuntu
+## 8. Back up the working Ubuntu
 
 Boot rooted stock Android so the Linux partition is unmounted:
 
