@@ -64,6 +64,25 @@ health-gated production profile explicitly:
 The panic timer is disabled by default. Pass `--panic-after SECONDS`
 explicitly when a timed safety reset is wanted.
 
+If Ubuntu has fallen back to stock while the phone is remote, boot the
+already-installed payload through the stock rescue tunnel:
+
+```bash
+./xaga recover --via stock-ssh
+```
+
+Recovery defaults to the `dev` watchdog profile. Select `prod` explicitly only
+after the deployed unattended profile has been validated:
+
+```bash
+./xaga recover --via stock-ssh prod --timeout 600
+```
+
+This recovery command does not upload or install kernel, initrd, DTB, runtime
+or rootfs files. It checks the existing stock payload, invokes the persistent
+launcher once, waits for the Ubuntu reverse tunnel, and collects stock-readable
+logs if the phone returns to stock.
+
 Run repeated unattended tests:
 
 ```bash

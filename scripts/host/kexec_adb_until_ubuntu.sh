@@ -71,6 +71,8 @@ pull_from_stock() {
     adb_root_shell "cat $REMOTE_STATE_DIR/wifi-status 2>/dev/null" > "$OUT/round_${r}_wifi_load_progress.txt" 2>/dev/null
     adb_root_shell "cat $REMOTE_LOG_DIR/dmesg-wifi-before.log 2>/dev/null" > "$OUT/round_${r}_dmesg_wifi_before.log" 2>/dev/null
     adb_root_shell "cat $REMOTE_LOG_DIR/dmesg-wifi-after.log 2>/dev/null" > "$OUT/round_${r}_dmesg_wifi_after.log" 2>/dev/null
+    $ADB exec-out su -c "cat $LINUX_MOUNT/var/lib/systemd/pstore/pmsg-ramoops-0 2>/dev/null" \
+        > "$OUT/round_${r}_pmsg.bin" 2>/dev/null
 }
 
 pull_from_ubuntu() {
@@ -84,15 +86,53 @@ pull_from_ubuntu() {
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/lib/kexec-runtime/wifi-status 2>/dev/null' > "$OUT/round_${r}_wifi_load_progress.txt" 2>/dev/null
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/log/kexec-runtime/dmesg-wifi-before.log 2>/dev/null' > "$OUT/round_${r}_dmesg_wifi_before.log" 2>/dev/null
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/log/kexec-runtime/dmesg-wifi-after.log 2>/dev/null' > "$OUT/round_${r}_dmesg_wifi_after.log" 2>/dev/null
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" exec-out \
+        'cat /var/lib/systemd/pstore/pmsg-ramoops-0 2>/dev/null || cat /sys/fs/pstore/pmsg-ramoops-0 2>/dev/null' \
+        > "$OUT/round_${r}_pmsg.bin" 2>/dev/null
 }
 
 pull_pstore_from_stock() {
     local r="$1"
     for _ in $(seq 1 12); do
         $ADB shell "su -c 'cat /sys/fs/pstore/console-ramoops-0 2>/dev/null'" > "$OUT/round_${r}_console.txt" 2>/dev/null
-        [ -s "$OUT/round_${r}_console.txt" ] && break
+        if [ ! -s "$OUT/round_${r}_pmsg.bin" ]; then
+            $ADB exec-out su -c 'cat /sys/fs/pstore/pmsg-ramoops-0 2>/dev/null' > "$OUT/round_${r}_pmsg.bin" 2>/dev/null
+        fi
+        [ -s "$OUT/round_${r}_console.txt" ] && [ -s "$OUT/round_${r}_pmsg.bin" ] && break
         sleep 1
     done
+}
+
+print_kexec_trace() {
+    local r="$1" path="$OUT/round_${r}_pmsg.bin" hex stage label found=""
+    [ -s "$path" ] || {
+        echo "kexec trace: pmsg unavailable"
+        return
+    }
+    hex="$(od -An -v -tx1 "$path" 2>/dev/null | tr -d ' \n')"
+    for stage in 10 11 20 21 22 23 30 31 32 40 41 42 50 51; do
+        case "$hex" in
+            *"${stage}474158${stage}474158${stage}474158${stage}474158"*) found="$stage" ;;
+        esac
+    done
+    case "$found" in
+        10) label="before local_daif_mask" ;;
+        11) label="after local_daif_mask" ;;
+        20) label="__cpu_soft_restart entry" ;;
+        21) label="before disabling MMU/cache" ;;
+        22) label="after disabling MMU/cache" ;;
+        23) label="before branch to relocation code" ;;
+        30) label="arm64_relocate_new_kernel entry" ;;
+        31) label="relocation complete" ;;
+        32) label="before branch to purgatory" ;;
+        40) label="purgatory entry" ;;
+        41) label="purgatory verification returned" ;;
+        42) label="before branch to new kernel" ;;
+        50) label="new kernel primary_entry" ;;
+        51) label="new kernel boot arguments preserved" ;;
+        *) label="no xaga marker found" ;;
+    esac
+    echo "kexec trace: stage=${found:-none} ($label), file=$path"
 }
 
 pstore_last_line() {
@@ -189,6 +229,8 @@ print_ubuntu_logs() {
     grep -aEi 'conn_pwr|conninfra_pwr|connsys|conn_infra|pre_cal|WIFI_RAM|download|firmware|gen4m|wmt turn|func_ctrl|chip_ver|wlan0|p2p|wlanProbe|probe success|netif|patch.*dl|MBOX Error|drop unmatched|Unknown symbol' "$OUT/round_${r}_dmesg_wifi_after.log" 2>/dev/null | tail -120
     echo "===== pstore tail ====="
     grep -aoE '\[[ ]*[0-9]+\.[0-9]+\].*' "$OUT/round_${r}_console.txt" 2>/dev/null | tail -80
+    echo "===== persistent kexec trace ====="
+    print_kexec_trace "$r"
     echo "====================="
 }
 
@@ -243,7 +285,7 @@ for r in $(seq 1 "$MAX"); do
                 pull_pstore_from_stock "$r"
                 print_ubuntu_logs "$r"
                 say "round $r: stock returned while waiting for Wi-Fi -> $OUT (stopping)"
-                echo; echo "logs: $OUT"; exit 0
+                echo; echo "logs: $OUT"; exit 6
             fi
             if ubuntu_up; then
                 pull_from_ubuntu "$r"
@@ -251,12 +293,13 @@ for r in $(seq 1 "$MAX"); do
                 pull_from_stock "$r"
                 pull_pstore_from_stock "$r"
             fi
+            print_kexec_trace "$r" | tee -a "$OUT/log.txt"
             echo; echo "logs: $OUT"; exit 0
         fi
         pull_from_ubuntu "$r"
         print_ubuntu_logs "$r"
         say "round $r: Ubuntu serial appeared but root probe failed -> $OUT (stopping)"
-        exit 0
+        exit 7
     fi
 
     if [ "$rc" = 3 ]; then
@@ -280,7 +323,7 @@ for r in $(seq 1 "$MAX"); do
     if [ -s "$OUT/round_${r}_boot_ubuntu_rootfs.log" ] &&
        grep -qa 'begin direct rootfs' "$OUT/round_${r}_boot_ubuntu_rootfs.log"; then
         say "round $r: reached direct-root handoff, but Ubuntu ADB did not validate -> $OUT (stopping)"
-        exit 0
+        exit 8
     fi
 
     last_pstore="$(pstore_last_line "$OUT/round_${r}_console.txt")"
@@ -291,7 +334,7 @@ for r in $(seq 1 "$MAX"); do
         echo "===== pstore tail ====="
         grep -aoE '\[[ ]*[0-9]+\.[0-9]+\].*' "$OUT/round_${r}_console.txt" 2>/dev/null | tail -120
         echo "======================="
-        exit 0
+        exit 9
     fi
     grep -aoE '\[[ ]*[0-9]+\.[0-9]+\].*' "$OUT/round_${r}_console.txt" 2>/dev/null | tail -3 | sed 's/^/    /'
 done

@@ -38,6 +38,12 @@ Public commands:
       dev keeps unconditional watchdog feeding; prod enables health-gated reset.
       Panic timer defaults to disabled (0).
 
+  recover --via stock-ssh [dev|prod] [--panic-after SECONDS]
+      [--timeout SECONDS]
+      Use the stock rescue tunnel to boot an already-installed payload.
+      This does not install or upload kernel, initrd, DTB or runtime files.
+      The default recovery timeout is 600 seconds.
+
   test --unattended [dev|prod] [--serial SERIAL] [--rounds N]
       [--panic-after SECONDS]
       Run repeated boot, watchdog and log-collection rounds.
@@ -269,6 +275,52 @@ cmd_boot()
   run_boot_loop
 }
 
+cmd_recover()
+{
+  local via= profile=dev profile_seen=0 panic_after=0 wait_timeout=600
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --via)
+        [ "$#" -ge 2 ] || die "--via requires a value"
+        via="$2"
+        shift 2
+        ;;
+      dev|prod)
+        [ "$profile_seen" = 0 ] || die "watchdog profile specified more than once"
+        profile="$1"
+        profile_seen=1
+        shift
+        ;;
+      --panic-after)
+        [ "$#" -ge 2 ] || die "--panic-after requires a value"
+        panic_after="$2"
+        shift 2
+        ;;
+      --timeout)
+        [ "$#" -ge 2 ] || die "--timeout requires a value"
+        wait_timeout="$2"
+        shift 2
+        ;;
+      *)
+        die "unknown recover option: $1"
+        ;;
+    esac
+  done
+
+  [ "$via" = stock-ssh ] || die "recover currently requires --via stock-ssh"
+  case "$panic_after" in
+    ''|*[!0-9]*) die "--panic-after must be a non-negative integer" ;;
+  esac
+  case "$wait_timeout" in
+    ''|*[!0-9]*|0) die "--timeout must be a positive integer" ;;
+  esac
+
+  RECOVER_PROFILE="$profile" \
+  RECOVER_PANIC_AFTER="$panic_after" \
+  RECOVER_WAIT_TIMEOUT="$wait_timeout" \
+    exec bash "$ROOT/scripts/host/recover_via_stock_ssh.sh"
+}
+
 cmd_test()
 {
   [ "${1:-}" = --unattended ] ||
@@ -317,6 +369,7 @@ case "$command_name" in
   build) cmd_build "$@" ;;
   install) cmd_install "$@" ;;
   boot) cmd_boot "$@" ;;
+  recover) cmd_recover "$@" ;;
   test) cmd_test "$@" ;;
   partition) cmd_partition "$@" ;;
   backup) cmd_backup "$@" ;;

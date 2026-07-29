@@ -6,10 +6,11 @@ Wants=kexec-vendor-mount.service
 
 [Service]
 Type=simple
-ExecStartPre=/bin/bash -c 'for _ in $(seq 1 90); do [ -e /run/kexec-runtime/adbd.ready ] && exit 0; sleep 1; done; echo "kexec-wifi: timed out waiting for /run/kexec-runtime/adbd.ready" >&2; exit 1'
+ExecStartPre=/bin/bash -c 'for _ in $(seq 1 30); do [ -e /run/kexec-runtime/adbd.ready ] && { echo "kexec-wifi: USB ADB ready"; exit 0; }; sleep 1; done; echo "kexec-wifi: USB ADB not enumerated; continuing for headless recovery"'
 ExecStart=/usr/local/libexec/kexec/bin/kexec-wifi
 Restart=on-failure
 RestartSec=10
+TimeoutStartSec=60
 
 [Install]
 WantedBy=multi-user.target

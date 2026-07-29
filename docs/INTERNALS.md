@@ -189,6 +189,45 @@ restricted to `from="127.0.0.1"` because sshd sees reverse-forward connections
 as local. The Ubuntu outbound key on the VPS should be limited to port
 forwarding and `permitlisten="127.0.0.1:22024"`.
 
+The public remote-recovery entry point is:
+
+```bash
+./xaga recover --via stock-ssh [dev|prod] [--panic-after SECONDS] \
+  [--timeout SECONDS]
+```
+
+It connects to `usjgw` by default, reaches stock through `22023`, verifies the
+root shell and existing payload, and invokes the persistent launcher exactly
+once. It then waits for validated Ubuntu SSH on `22024`. If stock returns or
+never leaves, it refuses to retry kexec automatically and captures pstore,
+stock-rescue output, and stock-readable Ubuntu runtime logs under
+`work/logs/recover_stock_ssh_*`.
+
+The helper waits up to 120 seconds for a temporarily stale stock tunnel to
+become usable before failing preflight. Its default post-trigger timeout is 600
+seconds so a delayed hardware-watchdog return to stock is still detected and
+logged.
+
+The ProxyJump alias, tunnel ports, users and local key paths can be
+overridden with `XAGA_RECOVER_GATEWAY`, `XAGA_STOCK_SSH_PORT`,
+`XAGA_UBUNTU_SSH_PORT`, `XAGA_STOCK_SSH_USER`,
+`XAGA_UBUNTU_SSH_USER`, `XAGA_STOCK_SSH_IDENTITY`, and
+`XAGA_UBUNTU_SSH_IDENTITY`. By default, the helper obtains the first
+`IdentityFile` from `ssh -G xaga` and uses it locally for both endpoints. The
+VPS only proxies TCP and does not need either device login key. Separate
+`HostKeyAlias` values prevent the two loopback ports from sharing host
+identity; `StrictHostKeyChecking=accept-new` enrolls each endpoint on first use
+and rejects later key changes.
+
+Recovery is deliberately not an alternate installation transport. It never
+uploads kernel, initrd, DTB, runtime or rootfs artifacts, and ADB remains the
+development transport for early-boot visibility and automated test loops.
+
+`kexec-wifi.service` preserves the USB race avoidance by giving ADB up to 30
+seconds to enumerate first. It then continues Wi-Fi bring-up even without
+`adbd.ready`; otherwise a headless stock-SSH recovery could never create
+`wlan0` and therefore could never establish the Ubuntu reverse tunnel.
+
 The helper `/data/local/tmp/xaga/reboot-to-ubuntu.sh` is the single stock-side
 launcher shared by host-driven boot/tests and manual stock rescue. It prepares
 the Ubuntu target, verifies and pins

@@ -59,7 +59,7 @@ while IFS='|' read -r group id kind rel_path url ref revision sha256; do
     archive-source)
       if [ "$id" = kexec_tools ] && [ -x "$path/configure" ] &&
          [ -x "$path/build/sbin/kexec" ]; then
-        version="$("$path/build/sbin/kexec" --version 2>&1 | head -1)"
+        version="$(strings "$path/build/sbin/kexec" | grep -m 1 '^kexec-tools ' || true)"
         case "$version" in
           *"$ref"*) ok "$id official archive locked; local binary: $version" ;;
           *) bad "$id binary version '$version' does not match $ref" ;;
