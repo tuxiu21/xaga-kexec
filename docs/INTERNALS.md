@@ -4,6 +4,14 @@ This document describes implementation details. The scripts named below are
 internal interfaces for debugging and may change. Normal development starts
 from the repository-root `./xaga` command documented in `../README.md`.
 
+Focused debugging documents:
+
+- [`KEXEC_DEBUGGING.md`](KEXEC_DEBUGGING.md) is the durable handoff-marker,
+  `Bye!`, pstore and failure-classification runbook.
+- [`incidents/2026-07-29-skb-panic.md`](incidents/2026-07-29-skb-panic.md)
+  records the confirmed Ubuntu network panic, current hypotheses and pending
+  A/B tests.
+
 ## Public command dispatch
 
 `./xaga` is intentionally a thin safety and orchestration layer:
