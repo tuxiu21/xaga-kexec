@@ -46,6 +46,20 @@ check_commands()
   [ "$missing" = 1 ] || ok "$id commands present"
 }
 
+check_kernel_submodule()
+{
+  local id="$1" tree="$2" path="$3" expected actual
+
+  expected="$(git -C "$tree" ls-tree HEAD "$path" 2>/dev/null |
+    awk '{print $3}')"
+  actual="$(git -C "$tree/$path" rev-parse HEAD 2>/dev/null || true)"
+  if [ -n "$expected" ] && [ "$actual" = "$expected" ]; then
+    ok "$id $path $actual"
+  else
+    bad "$id $path HEAD=${actual:-missing} expected=${expected:-missing}"
+  fi
+}
+
 while IFS='|' read -r group id kind rel_path url ref revision sha256; do
   case "$group" in ""|\#*) continue ;; esac
   path="$ROOT/$rel_path"
@@ -53,7 +67,7 @@ while IFS='|' read -r group id kind rel_path url ref revision sha256; do
     repo-manifest)
       check_git "$id manifest" "$path/.repo/manifests" "$revision"
       ;;
-    repo-project|git)
+    repo-project|git|git-worktree)
       check_git "$id" "$path" "$revision"
       ;;
     archive-source)
@@ -110,6 +124,13 @@ while IFS='|' read -r group id kind rel_path url ref revision sha256; do
   esac
 done < "$LOCK"
 
+for profile in stock ubuntu; do
+  profile_path="$AK/common-$profile"
+  if [ -d "$profile_path" ]; then
+    check_kernel_submodule "gki_common_$profile" "$profile_path" KernelSU
+  fi
+done
+
 check_patch()
 {
   local tree="$1" patch="$2"
@@ -122,9 +143,6 @@ check_patch()
   fi
 }
 
-if [ -d "$AK/common/.git" ]; then
-  check_patch "$AK/common" "$ROOT/patches/kernel-docker-nftables.patch"
-fi
 if [ -d "$AOSP_DIR/.repo" ]; then
   check_patch "$AOSP_DIR" "$ROOT/patches/aosp-init-kxsh-early-handoff.patch"
   check_patch "$AOSP_DIR" "$ROOT/patches/aosp-libmodprobe-kxsh-debug.patch"

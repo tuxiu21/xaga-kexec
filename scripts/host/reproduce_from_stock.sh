@@ -158,7 +158,7 @@ fi
 
 if [ "$BUILD_KERNEL" = 1 ]; then
   echo "== build GKI kernel =="
-  bash "$ROOT/scripts/host/build_gki_logged.sh"
+  KERNEL_PROFILE=ubuntu bash "$ROOT/scripts/host/build_gki_logged.sh"
 fi
 
 if [ "$BUILD_KEXEC" = 1 ]; then

@@ -3,6 +3,8 @@
 source|gki_manifest|repo-manifest|sources/android-kernel|https://android.googlesource.com/kernel/manifest|common-android12-5.10|d49bde80eee9eaa27ad83e92a36d27cf08dcfa17|-
 source|gki_build|repo-project|sources/android-kernel/build|https://android.googlesource.com/kernel/build|master-kernel-build-2021|dbfab7e0de2e04316b526ef938b1140d7a5fd40d|-
 source|gki_common|repo-project|sources/android-kernel/common|https://github.com/tuxiu21/android_gki_kernel_5.10_common.git|mykernel-226|80751a7a9ff4f51f2c770522984975c6071239e8|-
+source|gki_common_stock|git-worktree|sources/android-kernel/common-stock|https://github.com/tuxiu21/android_gki_kernel_5.10_common.git|xaga-stock|1f9cad2af948e20a63025e9232da3ba609f9f395|-
+source|gki_common_ubuntu|git-worktree|sources/android-kernel/common-ubuntu|https://github.com/tuxiu21/android_gki_kernel_5.10_common.git|xaga-ubuntu|2664732da66b83af14bc0a2cb98f2d230c6c745e|-
 source|gki_virtual_device|repo-project|sources/android-kernel/common-modules/virtual-device|https://android.googlesource.com/kernel/common-modules/virtual-device|android12-5.10|a89e3169b6f22716d9b9c80fd1e0034bfd3fd492|-
 source|gki_configs|repo-project|sources/android-kernel/kernel/configs|https://android.googlesource.com/kernel/configs|master-kernel-build-2021|c10b7ea022edc356d37c092d7ca46bcb860f8a90|-
 source|gki_hikey_modules|repo-project|sources/android-kernel/hikey-modules|https://android.googlesource.com/kernel/hikey-modules|android12-5.10|2e97927f068cd9d92a4b8039ef64c4467ca8985b|-

@@ -4,7 +4,7 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 OUT="${OUT:-$OUTPUT_DIR/mtk-mbox-ext}"
-KOUT="${KOUT:-$AK/out/android12-5.10/common}"
+KOUT="${KOUT:-$KERNEL_UBUNTU_OUT}"
 CLANG_BIN="${CLANG_BIN:-$AK/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin}"
 VENDOR_CPIO="${VENDOR_CPIO:-$VENDOR_DIR/ramdisk_patched.cpio}"
 GKI_RAMDISK="${GKI_RAMDISK:-$UNPACK_GKI_DIR/ramdisk}"

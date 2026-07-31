@@ -3,7 +3,7 @@ set -euo pipefail
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
-KERNEL_IMAGE="${KERNEL_IMAGE:-$AK/out/android12-5.10/dist/Image}"
+KERNEL_IMAGE="${KERNEL_IMAGE:-$KERNEL_UBUNTU_DIST/Image}"
 KEXEC_BIN="${KEXEC_BIN:-$KEXEC_TOOLS/build/sbin/kexec}"
 INITRD="${INITRD:-$OUTPUT_DIR/combined_ramdisk_kexec_system_mbox.lz4}"
 
@@ -23,7 +23,7 @@ trap cleanup EXIT
 
 if [ ! -s "$KERNEL_IMAGE" ]; then
   echo "missing required file: $KERNEL_IMAGE" >&2
-  echo "build it with scripts/host/build_gki_logged.sh, or pass KERNEL_IMAGE=/path/to/Image" >&2
+  echo "build it with ./xaga build kernel ubuntu, or pass KERNEL_IMAGE=/path/to/Image" >&2
   exit 1
 fi
 

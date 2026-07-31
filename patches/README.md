@@ -1,10 +1,8 @@
 # Patches
 
-## `kernel-docker-nftables.patch`
-
-Applies to the locked xaga GKI `common` tree. It records the nftables options
-that were previously only an uncommitted source-tree delta, so a fresh checkout
-gets the same Docker-facing kernel configuration.
+Kernel changes are maintained as Git commits in the locked `xaga-stock` and
+`xaga-ubuntu` worktrees. This directory is only for third-party source trees
+that this project does not own.
 
 ## `aosp-init-kxsh-early-handoff.patch`
 

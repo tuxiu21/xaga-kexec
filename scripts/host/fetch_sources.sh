@@ -77,6 +77,42 @@ checkout_exact()
   printf 'pinned %s (%s) at %s\n' "$path" "$ref" "$revision"
 }
 
+checkout_worktree_exact()
+{
+  local base="$1" path="$2" url="$3" ref="$4" revision="$5"
+
+  require_https "$url"
+  [ -d "$base" ] || {
+    echo "missing canonical kernel checkout for worktree: $base" >&2
+    exit 1
+  }
+  git -C "$base" fetch "$url" "$revision"
+
+  if [ ! -e "$path" ]; then
+    git -C "$base" worktree add --detach "$path" "$revision"
+    git -C "$path" submodule update --init --recursive
+    printf 'created %s worktree (%s) at %s\n' "$path" "$ref" "$revision"
+    return
+  fi
+
+  [ "$(git -C "$path" rev-parse --show-toplevel 2>/dev/null || true)" = \
+    "$(realpath -m "$path")" ] || {
+    echo "refusing non-worktree profile path: $path" >&2
+    exit 1
+  }
+  if [ "$(git -C "$path" rev-parse HEAD 2>/dev/null || true)" = "$revision" ]; then
+    git -C "$path" submodule update --init --recursive
+    return
+  fi
+  [ -z "$(git -C "$path" status --porcelain 2>/dev/null)" ] || {
+    echo "refusing to replace dirty kernel profile worktree: $path" >&2
+    exit 1
+  }
+  git -C "$path" checkout --detach "$revision"
+  git -C "$path" submodule update --init --recursive
+  printf 'pinned %s worktree (%s) at %s\n' "$path" "$ref" "$revision"
+}
+
 sync_repo_checkout()
 {
   local path="$1" url="$2" ref="$3" revision="$4"
@@ -108,6 +144,9 @@ while IFS='|' read -r group id kind rel_path url ref revision sha256; do
   case "$kind" in
     repo-manifest) sync_repo_checkout "$path" "$url" "$ref" "$revision" ;;
     repo-project|git) checkout_exact "$path" "$url" "$ref" "$revision" ;;
+    git-worktree)
+      checkout_worktree_exact "$AK/common" "$path" "$url" "$ref" "$revision"
+      ;;
     *) echo "unsupported source kind for $id: $kind" >&2; exit 1 ;;
   esac
 done < "$LOCK"
@@ -181,7 +220,6 @@ apply_patch_once()
 }
 
 if [ "$APPLY_PATCHES" = 1 ]; then
-  apply_patch_once "$AK/common" "$ROOT/patches/kernel-docker-nftables.patch"
   apply_patch_once "$AOSP_DIR" "$ROOT/patches/aosp-init-kxsh-early-handoff.patch"
   apply_patch_once "$AOSP_DIR" "$ROOT/patches/aosp-libmodprobe-kxsh-debug.patch"
   apply_patch_once "$AOSP_DIR" "$ROOT/patches/adbd-kexec-ubuntu.patch"
