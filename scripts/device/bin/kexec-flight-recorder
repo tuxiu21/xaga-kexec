@@ -1,0 +1,23 @@
+#!/bin/bash
+set -uo pipefail
+
+RUNTIME="${KEXEC_RUNTIME:-/usr/local/libexec/kexec}"
+. "$RUNTIME/lib/kexec/flight_recorder.sh"
+
+case "${1:-run}" in
+    run)
+        flight_recorder_main
+        ;;
+    event)
+        shift
+        [ "$#" -ge 3 ] || {
+            echo "usage: $0 event <level> <event> <message...>" >&2
+            exit 2
+        }
+        flight_recorder_event "$@"
+        ;;
+    *)
+        echo "usage: $0 [run|event <level> <event> <message...>]" >&2
+        exit 2
+        ;;
+esac

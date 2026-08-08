@@ -170,6 +170,8 @@ start_watchdog_gated()
                 fail_count=$((fail_count + 1))
                 reason="$(cat "$WATCHDOG_STATUS" 2>/dev/null || true)"
                 log "watchdog gated: health failed count=$fail_count/$WATCHDOG_FAIL_THRESHOLD $reason"
+                [ "$fail_count" != 1 ] ||
+                    flight_event warn watchdog_health "$reason"
 
                 if [ "$fail_count" -ge "$WATCHDOG_SELF_HEAL_AFTER" ] &&
                    [ "$fail_count" -lt "$WATCHDOG_FAIL_THRESHOLD" ]; then
@@ -182,6 +184,8 @@ start_watchdog_gated()
                         fail_count=0
                     else
                         log "watchdog gated: stopping watchdog feed; holding fd open for hardware reset"
+                        flight_event error watchdog_reset \
+                            "threshold=$WATCHDOG_FAIL_THRESHOLD $reason"
                         while true; do
                             sleep 3600
                         done

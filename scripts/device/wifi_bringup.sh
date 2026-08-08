@@ -265,6 +265,18 @@ wait_for_wifi_ready()
     create_dev_nodes
     dump_state
     log_step "$result"
+    if [ -x "$RUNTIME/bin/kexec-flight-recorder" ]; then
+        case "$result" in
+            READY)
+                "$RUNTIME/bin/kexec-flight-recorder" event info wifi "$result" \
+                    >/dev/null 2>&1 || true
+                ;;
+            *)
+                "$RUNTIME/bin/kexec-flight-recorder" event warn wifi "$result" \
+                    >/dev/null 2>&1 || true
+                ;;
+        esac
+    fi
     echo "## result: $result"
     echo "===== WIFI BRINGUP END $(date) ====="
     sync

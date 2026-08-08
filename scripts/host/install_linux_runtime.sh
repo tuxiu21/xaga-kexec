@@ -75,6 +75,7 @@ cp "$OUTPUT_DIR/boot_ubuntu_rootfs" "$tmp/push/boot_ubuntu_rootfs"
 cp "$ROOT/scripts/device/prepare_ubuntu_kexec_boot.sh" "$tmp/push/prepare_ubuntu_kexec_boot.sh"
 cp "$ROOT/scripts/device/wifi_bringup.sh" "$tmp/push/wifi_bringup.sh"
 cp "$ROOT/scripts/device/xaga-watchdog.conf" "$tmp/push/xaga-watchdog.conf"
+cp "$ROOT/scripts/device/xaga-flight-recorder.conf" "$tmp/push/xaga-flight-recorder.conf"
 cp "$ROOT/scripts/device/xaga-reverse-ssh.conf.sample" "$tmp/push/xaga-reverse-ssh.conf.sample"
 cp "$ROOT/scripts/device/map_super_partitions.py" "$tmp/push/map_super_partitions.py"
 cp -R "$ROOT/scripts/device/bin/." "$tmp/push/bin/"
@@ -124,12 +125,16 @@ adb_root_shell "
   cp '$RUNTIME_DIR/systemd/'*.link '$LINUX_MOUNT/etc/systemd/network/' 2>/dev/null || true
   [ -e '$LINUX_MOUNT/etc/xaga-watchdog.conf' ] ||
     cp '$RUNTIME_DIR/xaga-watchdog.conf' '$LINUX_MOUNT/etc/xaga-watchdog.conf'
+  [ -e '$LINUX_MOUNT/etc/xaga-flight-recorder.conf' ] ||
+    cp '$RUNTIME_DIR/xaga-flight-recorder.conf' \
+      '$LINUX_MOUNT/etc/xaga-flight-recorder.conf'
   cp '$RUNTIME_DIR/xaga-reverse-ssh.conf.sample' \
     '$LINUX_MOUNT/etc/xaga-reverse-ssh.conf.sample'
 
   chmod 0644 '$LINUX_MOUNT/etc/systemd/system'/kexec-*.service \
     '$LINUX_MOUNT/etc/systemd/system'/kexec-*.target \
     '$LINUX_MOUNT/etc/xaga-watchdog.conf' \
+    '$LINUX_MOUNT/etc/xaga-flight-recorder.conf' \
     '$LINUX_MOUNT/etc/xaga-reverse-ssh.conf.sample' 2>/dev/null || true
   chmod 0644 '$LINUX_MOUNT/etc/systemd/system'/*.service.d/*.conf \
     '$LINUX_MOUNT/etc/systemd/network'/*.network \
@@ -141,7 +146,8 @@ adb_root_shell "
   rm -rf '$LINUX_MOUNT/etc/systemd/system/kexec-phase-a.service.d'
   rm -rf '$LINUX_MOUNT/etc/systemd/system/wpa_supplicant@wlan0.service.d'
   for unit in \
-    kexec-time-keeper.service kexec-watchdog.service kexec-panic-timer.service \
+    kexec-flight-recorder.service kexec-time-keeper.service \
+    kexec-watchdog.service kexec-panic-timer.service \
     kexec-vendor-mount.service kexec-adbd.service kexec-wifi.service \
     kexec-wpa-supplicant.service kexec-reverse-ssh.service; do
     ln -sfn '../'\$unit '$LINUX_MOUNT/etc/systemd/system/multi-user.target.wants/'\$unit

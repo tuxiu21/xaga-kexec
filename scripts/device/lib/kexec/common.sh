@@ -19,6 +19,13 @@ log_ls()
     } >> "$LOG" 2>&1
 }
 
+flight_event()
+{
+    helper="${KEXEC_RUNTIME:-/usr/local/libexec/kexec}/bin/kexec-flight-recorder"
+    [ -x "$helper" ] || return 0
+    "$helper" event "$@" >/dev/null 2>&1 || true
+}
+
 mount_if_needed()
 {
     mp="$1"

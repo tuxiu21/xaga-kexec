@@ -1,0 +1,14 @@
+[Unit]
+Description=Kexec Ubuntu persistent flight recorder
+DefaultDependencies=no
+After=local-fs.target
+Before=kexec-watchdog.service kexec-wifi.service multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/kexec/bin/kexec-flight-recorder
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

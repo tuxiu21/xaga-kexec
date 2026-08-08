@@ -11,6 +11,9 @@ Focused debugging documents:
 - [`incidents/2026-07-29-skb-panic.md`](incidents/2026-07-29-skb-panic.md)
   records the confirmed Ubuntu network panic, current hypotheses and pending
   A/B tests.
+- [`FLIGHT_RECORDER.md`](FLIGHT_RECORDER.md) describes the bounded persistent
+  event recorder used to correlate intermittent kernel, DMA, Wi-Fi, watchdog
+  and runtime failures.
 
 ## Public command dispatch
 
@@ -589,6 +592,7 @@ Persistent direct-root logs:
 ```text
 /var/log/kexec-runtime/boot-rootfs.log
 /var/log/kexec-runtime/ubuntu-runtime.log
+/var/log/kexec-runtime/flight-recorder.log
 /var/log/kexec-runtime/adbd.log
 /var/log/kexec-runtime/wifi-bringup.log
 /var/log/kexec-runtime/dmesg-wifi-before.log
@@ -599,7 +603,8 @@ In Ubuntu, systemd unit state is the primary runtime view:
 
 ```sh
 systemctl status kexec-adbd.service kexec-wifi.service \
-  kexec-wpa-supplicant.service systemd-networkd.service ssh.service
+  kexec-flight-recorder.service kexec-wpa-supplicant.service \
+  systemd-networkd.service ssh.service
 journalctl -u kexec-wifi.service -u kexec-wpa-supplicant.service -b --no-pager
 ```
 

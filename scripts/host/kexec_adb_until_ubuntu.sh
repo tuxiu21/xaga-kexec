@@ -35,6 +35,13 @@ STOCK_SERIAL="${STOCK_SERIAL:-}"
 
 say() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$OUT/log.txt"; }
 
+decode_flight_recorder() {
+    local r="$1" pmsg="$OUT/round_${r}_pmsg.bin"
+    [ -s "$pmsg" ] || return 0
+    "$ROOT/scripts/host/decode_flight_recorder.sh" "$pmsg" \
+        > "$OUT/round_${r}_flight_recorder_pmsg.txt" 2>/dev/null || true
+}
+
 adb_devices() { timeout "$ADB_TIMEOUT" "$ADB" devices 2>/dev/null | tr -d '\r'; }
 serial_state() { adb_devices | awk -v s="$1" '$1==s{print $2}'; }
 ubuntu_up() { [ "$(serial_state "$UBUNTU_SERIAL")" = "device" ]; }
@@ -71,8 +78,15 @@ pull_from_stock() {
     adb_root_shell "cat $REMOTE_STATE_DIR/wifi-status 2>/dev/null" > "$OUT/round_${r}_wifi_load_progress.txt" 2>/dev/null
     adb_root_shell "cat $REMOTE_LOG_DIR/dmesg-wifi-before.log 2>/dev/null" > "$OUT/round_${r}_dmesg_wifi_before.log" 2>/dev/null
     adb_root_shell "cat $REMOTE_LOG_DIR/dmesg-wifi-after.log 2>/dev/null" > "$OUT/round_${r}_dmesg_wifi_after.log" 2>/dev/null
+    adb_root_shell "for f in $REMOTE_LOG_DIR/flight-recorder.log.8 $REMOTE_LOG_DIR/flight-recorder.log.7 $REMOTE_LOG_DIR/flight-recorder.log.6 $REMOTE_LOG_DIR/flight-recorder.log.5 $REMOTE_LOG_DIR/flight-recorder.log.4 $REMOTE_LOG_DIR/flight-recorder.log.3 $REMOTE_LOG_DIR/flight-recorder.log.2 $REMOTE_LOG_DIR/flight-recorder.log.1 $REMOTE_LOG_DIR/flight-recorder.log; do [ ! -f \\\"\\\$f\\\" ] || cat \\\"\\\$f\\\"; done" > "$OUT/round_${r}_flight_recorder_disk.txt" 2>/dev/null
     $ADB exec-out su -c "cat $LINUX_MOUNT/var/lib/systemd/pstore/pmsg-ramoops-0 2>/dev/null" \
-        > "$OUT/round_${r}_pmsg.bin" 2>/dev/null
+        > "$OUT/round_${r}_pmsg_ubuntu_archive.bin" 2>/dev/null
+    if [ -s "$OUT/round_${r}_pmsg_ubuntu_archive.bin" ]; then
+        "$ROOT/scripts/host/decode_flight_recorder.sh" \
+            "$OUT/round_${r}_pmsg_ubuntu_archive.bin" \
+            > "$OUT/round_${r}_flight_recorder_ubuntu_archive.txt" \
+            2>/dev/null || true
+    fi
 }
 
 pull_from_ubuntu() {
@@ -86,21 +100,30 @@ pull_from_ubuntu() {
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/lib/kexec-runtime/wifi-status 2>/dev/null' > "$OUT/round_${r}_wifi_load_progress.txt" 2>/dev/null
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/log/kexec-runtime/dmesg-wifi-before.log 2>/dev/null' > "$OUT/round_${r}_dmesg_wifi_before.log" 2>/dev/null
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'cat /var/log/kexec-runtime/dmesg-wifi-after.log 2>/dev/null' > "$OUT/round_${r}_dmesg_wifi_after.log" 2>/dev/null
+    timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" shell 'for f in /var/log/kexec-runtime/flight-recorder.log.8 /var/log/kexec-runtime/flight-recorder.log.7 /var/log/kexec-runtime/flight-recorder.log.6 /var/log/kexec-runtime/flight-recorder.log.5 /var/log/kexec-runtime/flight-recorder.log.4 /var/log/kexec-runtime/flight-recorder.log.3 /var/log/kexec-runtime/flight-recorder.log.2 /var/log/kexec-runtime/flight-recorder.log.1 /var/log/kexec-runtime/flight-recorder.log; do [ ! -f "$f" ] || cat "$f"; done' > "$OUT/round_${r}_flight_recorder_disk.txt" 2>/dev/null
     timeout "$ADB_TIMEOUT" "$ADB" -s "$UBUNTU_SERIAL" exec-out \
         'cat /var/lib/systemd/pstore/pmsg-ramoops-0 2>/dev/null || cat /sys/fs/pstore/pmsg-ramoops-0 2>/dev/null' \
         > "$OUT/round_${r}_pmsg.bin" 2>/dev/null
+    decode_flight_recorder "$r"
 }
 
 pull_pstore_from_stock() {
     local r="$1"
+    : > "$OUT/round_${r}_pmsg.bin"
     for _ in $(seq 1 12); do
         $ADB shell "su -c 'cat /sys/fs/pstore/console-ramoops-0 2>/dev/null'" > "$OUT/round_${r}_console.txt" 2>/dev/null
-        if [ ! -s "$OUT/round_${r}_pmsg.bin" ]; then
-            $ADB exec-out su -c 'cat /sys/fs/pstore/pmsg-ramoops-0 2>/dev/null' > "$OUT/round_${r}_pmsg.bin" 2>/dev/null
+        $ADB exec-out su -c 'cat /sys/fs/pstore/pmsg-ramoops-0 2>/dev/null' \
+            > "$OUT/round_${r}_pmsg.bin.tmp" 2>/dev/null
+        if [ -s "$OUT/round_${r}_pmsg.bin.tmp" ]; then
+            mv -f "$OUT/round_${r}_pmsg.bin.tmp" \
+                "$OUT/round_${r}_pmsg.bin"
+        else
+            rm -f "$OUT/round_${r}_pmsg.bin.tmp"
         fi
         [ -s "$OUT/round_${r}_console.txt" ] && [ -s "$OUT/round_${r}_pmsg.bin" ] && break
         sleep 1
     done
+    decode_flight_recorder "$r"
 }
 
 print_kexec_trace() {
@@ -227,6 +250,10 @@ print_ubuntu_logs() {
     cat "$OUT/round_${r}_wifi_load_progress.txt" 2>/dev/null
     echo "===== dmesg_wifi_after tail ====="
     grep -aEi 'conn_pwr|conninfra_pwr|connsys|conn_infra|pre_cal|WIFI_RAM|download|firmware|gen4m|wmt turn|func_ctrl|chip_ver|wlan0|p2p|wlanProbe|probe success|netif|patch.*dl|MBOX Error|drop unmatched|Unknown symbol' "$OUT/round_${r}_dmesg_wifi_after.log" 2>/dev/null | tail -120
+    echo "===== flight recorder disk tail ====="
+    tail -80 "$OUT/round_${r}_flight_recorder_disk.txt" 2>/dev/null
+    echo "===== flight recorder pmsg ====="
+    cat "$OUT/round_${r}_flight_recorder_pmsg.txt" 2>/dev/null
     echo "===== pstore tail ====="
     grep -aoE '\[[ ]*[0-9]+\.[0-9]+\].*' "$OUT/round_${r}_console.txt" 2>/dev/null | tail -80
     echo "===== persistent kexec trace ====="

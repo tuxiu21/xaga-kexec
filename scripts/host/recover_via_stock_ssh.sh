@@ -144,6 +144,15 @@ collect_stock_logs()
                 mounted_here=1
         fi
         for f in \
+            /mnt/linux_kexec/var/log/kexec-runtime/flight-recorder.log.8 \
+            /mnt/linux_kexec/var/log/kexec-runtime/flight-recorder.log.7 \
+            /mnt/linux_kexec/var/log/kexec-runtime/flight-recorder.log.6 \
+            /mnt/linux_kexec/var/log/kexec-runtime/flight-recorder.log.5 \
+            /mnt/linux_kexec/var/log/kexec-runtime/flight-recorder.log.4 \
+            /mnt/linux_kexec/var/log/kexec-runtime/flight-recorder.log.3 \
+            /mnt/linux_kexec/var/log/kexec-runtime/flight-recorder.log.2 \
+            /mnt/linux_kexec/var/log/kexec-runtime/flight-recorder.log.1 \
+            /mnt/linux_kexec/var/log/kexec-runtime/flight-recorder.log \
             /mnt/linux_kexec/var/log/kexec-runtime/bootstrap.log \
             /mnt/linux_kexec/var/log/kexec-runtime/boot-rootfs.log \
             /mnt/linux_kexec/var/log/kexec-runtime/ubuntu-runtime.log \
@@ -155,6 +164,8 @@ collect_stock_logs()
         done
         [ "$mounted_here" = 0 ] || umount /mnt/linux_kexec 2>/dev/null || true
     ' > "$destination" 2>&1 || say "stock log collection failed"
+    "$ROOT/scripts/host/decode_flight_recorder.sh" "$destination" \
+        > "$OUT/flight-recorder-pmsg.txt" 2>/dev/null || true
 }
 
 case "$PROFILE" in
